@@ -14,7 +14,7 @@ npm run dev
 
 Optional environment variables: `OPENAI_BASE_URL` (defaults to OpenAI's v1 API) and `MODEL` (defaults to `gpt-4o-mini`). The endpoint must support OpenAI Chat Completions tool calling.
 
-Try `What time is it?` or `List the files in this project.` Type `/exit` to quit.
+The agent exposes three coding-agent file tools: `read`, `write`, and `edit`, plus `bash`. File tools are restricted to the current working directory. On Windows, `bash` looks for Git Bash in common installation paths (or `GIT_BASH_PATH`). If Git Bash is missing, it reports an install link and `winget` command; it does not silently install software or change the system.
 
 ## Loop shape
 
