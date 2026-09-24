@@ -11,18 +11,21 @@ if (!apiKey) {
   process.exit(1);
 }
 
+const modelName = process.env.MODEL ?? "gpt-4o-mini";
 const agent = new Agent({
   model: new OpenAICompatibleModel(
     apiKey,
-    process.env.MODEL ?? "gpt-4o-mini",
+    modelName,
     process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
   ),
   tools,
-  systemPrompt: "You are a helpful assistant. Use tools when they help answer the user. Be concise.",
+  systemPrompt: `You are a helpful assistant. 
+  You are running on the model: ${modelName}.
+  Use tools when they help answer the user. Be concise.`,
 });
 
 const terminal = createInterface({ input: stdin, output: stdout });
-console.log("Tiny Agent ready. Type /exit to quit.\n");
+console.log("Agent ready. Type /exit to quit.\n");
 
 while (true) {
   const input = (await terminal.question("you> ")).trim();
