@@ -26,10 +26,16 @@ export interface Tool {
 
 export interface Model {
   complete(messages: Message[], tools: ToolDefinition[]): Promise<Message>;
+  stream?(messages: Message[], tools: ToolDefinition[]): AsyncGenerator<ModelStreamEvent>;
 }
+
+export type ModelStreamEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "message"; message: Message };
 
 export type AgentEvent =
   | { type: "message_start"; turn: number }
+  | { type: "text_delta"; text: string }
   | { type: "message_end"; message: Message }
   | { type: "tool_start"; toolCall: ToolCall }
   | { type: "tool_end"; toolCall: ToolCall; result: string }

@@ -91,14 +91,22 @@ while (true) {
 
   try {
     currentNodeId = sessionStore.appendNode(sessionId, currentNodeId, { role: "user", content: input });
+    let streamedText = false;
     for await (const event of agent.run(input)) {
+      if (event.type === "text_delta") {
+        stdout.write(event.text);
+        streamedText = true;
+      }
       if (event.type === "message_end") currentNodeId = sessionStore.appendNode(sessionId, currentNodeId, event.message);
       if (event.type === "tool_start") console.log(`\n[tool] ${event.toolCall.function.name}`);
       if (event.type === "tool_end") {
         currentNodeId = sessionStore.appendNode(sessionId, currentNodeId, { role: "tool", tool_call_id: event.toolCall.id, content: event.result });
         console.log(`[result] ${event.result}`);
       }
-      if (event.type === "agent_end") console.log(`\nagent> ${event.message.content ?? ""}\n`);
+      if (event.type === "agent_end") {
+        if (streamedText) console.log("\n");
+        else console.log(`\nagent> ${event.message.content ?? ""}\n`);
+      }
     }
   } catch (error) {
     console.error(`\nagent error> ${error instanceof Error ? error.message : String(error)}\n`);

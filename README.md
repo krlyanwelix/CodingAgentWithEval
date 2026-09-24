@@ -21,3 +21,5 @@ Sessions are persisted in SQLite at `data/agent.sqlite`. Messages are stored as 
 ## Loop shape
 
 `Agent.run()` is an async event generator. It keeps a conversation message list, asks the model for its next message, executes all returned tool calls, appends tool results, and loops until there are no more tool calls. A turn limit prevents runaway loops; tool failures are returned to the model as tool results. The CLI is only a thin consumer of those events.
+
+The OpenAI-compatible adapter supports streaming. Text is emitted as `text_delta` events and printed immediately by the CLI. Tool-call fragments are accumulated until a complete call is available, then the normal tool loop continues. Models without a `stream()` implementation use the non-streaming `complete()` fallback.

@@ -29,10 +29,16 @@ export class Agent {
     try {
       for (let turn = 1; turn <= this.maxTurns; turn += 1) {
         yield { type: "message_start", turn };
-        const assistantMessage = await this.options.model.complete(
-          this.messages,
-          this.options.tools.map((tool) => tool.definition),
-        );
+        let assistantMessage: Message;
+        if (this.options.model.stream) {
+          assistantMessage = { role: "assistant", content: null };
+          for await (const event of this.options.model.stream(this.messages, this.options.tools.map((tool) => tool.definition))) {
+            if (event.type === "text_delta") yield { type: "text_delta", text: event.text };
+            else assistantMessage = event.message;
+          }
+        } else {
+          assistantMessage = await this.options.model.complete(this.messages, this.options.tools.map((tool) => tool.definition));
+        }
         this.messages.push(assistantMessage);
         yield { type: "message_end", message: assistantMessage };
 
