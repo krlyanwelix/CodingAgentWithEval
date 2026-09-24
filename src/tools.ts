@@ -98,6 +98,7 @@ export const tools: Tool[] = [
         additionalProperties: false,
       },
     },
+    requiresConfirmation: true,
     async execute(args) {
       const input = objectArgs(args);
       if (typeof input.command !== "string" || input.command.trim() === "") throw new Error("command must be a non-empty string");

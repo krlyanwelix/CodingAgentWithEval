@@ -6,6 +6,7 @@ export interface AgentOptions {
   systemPrompt: string;
   maxTurns?: number;
   history?: Message[];
+  confirmToolCall?: (toolCall: ToolCall) => Promise<boolean>;
 }
 
 /**
@@ -66,6 +67,10 @@ export class Agent {
   private async executeTool(call: ToolCall): Promise<string> {
     const tool = this.toolByName.get(call.function.name);
     if (!tool) return `Tool not found: ${call.function.name}`;
+    if (tool.requiresConfirmation) {
+      const approved = this.options.confirmToolCall ? await this.options.confirmToolCall(call) : false;
+      if (!approved) return "Tool execution cancelled by the user.";
+    }
     try {
       const args: unknown = JSON.parse(call.function.arguments || "{}");
       return await tool.execute(args);

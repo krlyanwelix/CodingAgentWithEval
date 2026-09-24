@@ -16,6 +16,12 @@ Optional environment variables: `OPENAI_BASE_URL` (defaults to OpenAI's v1 API) 
 
 The agent exposes three coding-agent file tools: `read`, `write`, and `edit`, plus `bash`. File tools are restricted to the current working directory. On Windows, `bash` looks for Git Bash in common installation paths (or `GIT_BASH_PATH`). If Git Bash is missing, it reports an install link and `winget` command; it does not silently install software or change the system.
 
+Additional tools and skills are loaded at startup. Put tool modules in `tools/` and export a `tool`, `tools`, or default value implementing the `Tool` interface. Put skill instructions in `skills/**/SKILL.md`; startup only loads each Skill's name and description. The full file is read on demand through the `load_skill` tool. Override these directories with `AGENT_TOOLS_DIR` and `AGENT_SKILLS_DIR`. The built-in tools are always loaded first.
+
+Loaded Skill text is explicitly marked as untrusted reference material. It cannot override system instructions, grant permissions, request secrets, or authorize tools. The `bash` tool requires an interactive `y/N` confirmation before execution; a declined command is returned to the model as cancelled.
+
+`tools/exa-search.ts` provides the `exa_search` web-search tool. Create an Exa API key, put it in `.env` as `EXA_API_KEY`, restart the agent, and ask a current-information question. The tool calls `https://api.exa.ai/search` directly and does not send the key to the model.
+
 Sessions are persisted in SQLite at `data/agent.sqlite`. Messages are stored as parent-linked nodes. On startup, choose an existing session, then press Enter to resume the latest node, use `r<number>` to resume a specific node, or `f<number>` to fork that node into a new session. Set `SESSION_DB` to use another database path.
 
 ## Loop shape

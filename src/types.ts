@@ -21,6 +21,7 @@ export interface ToolDefinition {
 
 export interface Tool {
   definition: ToolDefinition;
+  requiresConfirmation?: boolean;
   execute(args: unknown): Promise<string>;
 }
 
