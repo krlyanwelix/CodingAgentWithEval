@@ -4,14 +4,10 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Message } from "./types.js";
 
-export interface SessionSummary {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-}
+export interface SessionSummary { id: string; createdAt: string; updatedAt: string; nodeCount: number; }
+export interface NodeSummary { id: string; parentId: string | null; role: Message["role"]; content: string | null; createdAt: string; }
 
-/** Persistence boundary for conversations. Agent itself knows nothing about SQLite. */
+/** SQLite persistence boundary. Each message is a node and parent_id forms the conversation tree. */
 export class SessionStore {
   private readonly db: Database.Database;
 
@@ -19,69 +15,55 @@ export class SessionStore {
     mkdirSync(dirname(filename), { recursive: true });
     this.db = new Database(filename);
     this.db.pragma("journal_mode = WAL");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        role TEXT NOT NULL,
-        content TEXT,
-        tool_call_id TEXT,
-        tool_calls TEXT,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
-    `);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      parent_id TEXT REFERENCES nodes(id), role TEXT NOT NULL, content TEXT, tool_call_id TEXT, tool_calls TEXT, created_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_nodes_session ON nodes(session_id, created_at);`);
   }
 
-  createSession(id: string = randomUUID()): string {
+  createSession(): string {
+    const id = randomUUID();
     const now = new Date().toISOString();
     this.db.prepare("INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)").run(id, now, now);
     return id;
   }
 
-  ensureSession(id: string): string {
-    const found = this.db.prepare("SELECT id FROM sessions WHERE id = ?").get(id);
-    return found ? id : this.createSession(id);
-  }
-
   listSessions(): SessionSummary[] {
-    const rows = this.db.prepare(`
-      SELECT s.id, s.created_at, s.updated_at, COUNT(m.id) AS message_count
-      FROM sessions s LEFT JOIN messages m ON m.session_id = s.id
-      GROUP BY s.id ORDER BY s.updated_at DESC
-    `).all() as Array<{ id: string; created_at: string; updated_at: string; message_count: number }>;
-    return rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, messageCount: row.message_count }));
+    const rows = this.db.prepare("SELECT s.id, s.created_at, s.updated_at, COUNT(n.id) AS node_count FROM sessions s LEFT JOIN nodes n ON n.session_id = s.id GROUP BY s.id ORDER BY s.updated_at DESC").all() as Array<{ id: string; created_at: string; updated_at: string; node_count: number }>;
+    return rows.map((r) => ({ id: r.id, createdAt: r.created_at, updatedAt: r.updated_at, nodeCount: r.node_count }));
   }
 
-  appendMessage(sessionId: string, message: Message): void {
-    this.ensureSession(sessionId);
-    this.db.prepare(
-      "INSERT INTO messages (session_id, role, content, tool_call_id, tool_calls, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(sessionId, message.role, message.content, message.tool_call_id ?? null, message.tool_calls ? JSON.stringify(message.tool_calls) : null, new Date().toISOString());
-    this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), sessionId);
+  listNodes(sessionId: string): NodeSummary[] {
+    const rows = this.db.prepare("SELECT id, parent_id, role, content, created_at FROM nodes WHERE session_id = ? ORDER BY created_at, rowid").all(sessionId) as Array<{ id: string; parent_id: string | null; role: Message["role"]; content: string | null; created_at: string }>;
+    return rows.map((r) => ({ id: r.id, parentId: r.parent_id, role: r.role, content: r.content, createdAt: r.created_at }));
   }
 
-  getMessages(sessionId: string): Message[] {
-    const rows = this.db.prepare("SELECT role, content, tool_call_id, tool_calls FROM messages WHERE session_id = ? ORDER BY id").all(sessionId) as Array<{
-      role: Message["role"];
-      content: string | null;
-      tool_call_id: string | null;
-      tool_calls: string | null;
-    }>;
-    return rows.map((row) => ({
-      role: row.role,
-      content: row.content,
-      ...(row.tool_call_id ? { tool_call_id: row.tool_call_id } : {}),
-      ...(row.tool_calls ? { tool_calls: JSON.parse(row.tool_calls) } : {}),
-    }));
+  getPath(nodeId: string): Message[] {
+    const rows: Array<{ parent_id: string | null; role: Message["role"]; content: string | null; tool_call_id: string | null; tool_calls: string | null }> = [];
+    let current: string | null = nodeId;
+    while (current) {
+      const row = this.db.prepare("SELECT parent_id, role, content, tool_call_id, tool_calls FROM nodes WHERE id = ?").get(current) as ({ parent_id: string | null; role: Message["role"]; content: string | null; tool_call_id: string | null; tool_calls: string | null } | undefined);
+      if (!row) throw new Error(`Node not found: ${current}`);
+      rows.push(row);
+      current = row.parent_id;
+    }
+    return rows.reverse().map((row) => ({ role: row.role, content: row.content, ...(row.tool_call_id ? { tool_call_id: row.tool_call_id } : {}), ...(row.tool_calls ? { tool_calls: JSON.parse(row.tool_calls) } : {}) }));
   }
 
-  close(): void {
-    this.db.close();
+  appendNode(sessionId: string, parentId: string | null, message: Message): string {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO nodes (id, session_id, parent_id, role, content, tool_call_id, tool_calls, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, sessionId, parentId, message.role, message.content, message.tool_call_id ?? null, message.tool_calls ? JSON.stringify(message.tool_calls) : null, now);
+    this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
+    return id;
   }
+
+  forkFromNode(nodeId: string): { sessionId: string; nodeId: string } {
+    const sessionId = this.createSession();
+    let parent: string | null = null;
+    for (const message of this.getPath(nodeId)) parent = this.appendNode(sessionId, parent, message);
+    return { sessionId, nodeId: parent as string };
+  }
+
+  close(): void { this.db.close(); }
 }

@@ -25,7 +25,7 @@ if (existingSessions.length === 0) {
   console.log("\nExisting sessions:");
   existingSessions.forEach((session, index) => {
     const updated = new Date(session.updatedAt).toLocaleString();
-    console.log(`${index + 1}. ${session.id}  (${session.messageCount} messages, updated ${updated})`);
+    console.log(`${index + 1}. ${session.id}  (${session.nodeCount} nodes, updated ${updated})`);
   });
   while (true) {
     const choice = (await terminal.question("Resume a session by number, or enter n for a new session: ")).trim().toLowerCase();
@@ -42,7 +42,33 @@ if (existingSessions.length === 0) {
   }
 }
 
-const history = sessionStore.getMessages(sessionId);
+let nodes = sessionStore.listNodes(sessionId);
+let currentNodeId: string | null = nodes.length > 0 ? nodes[nodes.length - 1].id : null;
+if (nodes.length > 0) {
+  console.log("\nConversation nodes:");
+  nodes.forEach((node, index) => {
+    const preview = (node.content ?? "").replace(/\s+/g, " ").slice(0, 70);
+    console.log(`${index + 1}. [${node.role}] ${preview}${(node.content ?? "").length > 70 ? "..." : ""}`);
+  });
+  while (true) {
+    const choice = (await terminal.question("Resume a node (r<number>), fork it into a new session (f<number>), or press Enter for the latest: ")).trim().toLowerCase();
+    if (choice === "") break;
+    const match = choice.match(/^([rf])\s*(\d+)$/);
+    if (!match) { console.log("Please use r1, f1, or press Enter."); continue; }
+    const index = Number.parseInt(match[2], 10) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= nodes.length) { console.log("That node number does not exist."); continue; }
+    if (match[1] === "f") {
+      const fork = sessionStore.forkFromNode(nodes[index].id);
+      sessionId = fork.sessionId;
+      currentNodeId = fork.nodeId;
+      console.log(`Forked into session ${sessionId}.`);
+    } else {
+      currentNodeId = nodes[index].id;
+    }
+    break;
+  }
+}
+const history = currentNodeId ? sessionStore.getPath(currentNodeId) : [];
 const agent = new Agent({
   model: new OpenAICompatibleModel(
     apiKey,
@@ -64,12 +90,12 @@ while (true) {
   if (!input) continue;
 
   try {
-    sessionStore.appendMessage(sessionId, { role: "user", content: input });
+    currentNodeId = sessionStore.appendNode(sessionId, currentNodeId, { role: "user", content: input });
     for await (const event of agent.run(input)) {
-      if (event.type === "message_end") sessionStore.appendMessage(sessionId, event.message);
+      if (event.type === "message_end") currentNodeId = sessionStore.appendNode(sessionId, currentNodeId, event.message);
       if (event.type === "tool_start") console.log(`\n[tool] ${event.toolCall.function.name}`);
       if (event.type === "tool_end") {
-        sessionStore.appendMessage(sessionId, { role: "tool", tool_call_id: event.toolCall.id, content: event.result });
+        currentNodeId = sessionStore.appendNode(sessionId, currentNodeId, { role: "tool", tool_call_id: event.toolCall.id, content: event.result });
         console.log(`[result] ${event.result}`);
       }
       if (event.type === "agent_end") console.log(`\nagent> ${event.message.content ?? ""}\n`);

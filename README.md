@@ -16,7 +16,7 @@ Optional environment variables: `OPENAI_BASE_URL` (defaults to OpenAI's v1 API) 
 
 The agent exposes three coding-agent file tools: `read`, `write`, and `edit`, plus `bash`. File tools are restricted to the current working directory. On Windows, `bash` looks for Git Bash in common installation paths (or `GIT_BASH_PATH`). If Git Bash is missing, it reports an install link and `winget` command; it does not silently install software or change the system.
 
-Sessions are persisted in SQLite at `data/agent.sqlite`. On startup, choose an existing session by number or enter `n` to create a new one. Set `SESSION_DB` to use another database path.
+Sessions are persisted in SQLite at `data/agent.sqlite`. Messages are stored as parent-linked nodes. On startup, choose an existing session, then press Enter to resume the latest node, use `r<number>` to resume a specific node, or `f<number>` to fork that node into a new session. Set `SESSION_DB` to use another database path.
 
 ## Loop shape
 
