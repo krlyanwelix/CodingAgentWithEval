@@ -5,6 +5,7 @@ export interface AgentOptions {
   tools: Tool[];
   systemPrompt: string;
   maxTurns?: number;
+  history?: Message[];
 }
 
 /**
@@ -19,7 +20,7 @@ export class Agent {
   constructor(private readonly options: AgentOptions) {
     this.toolByName = new Map(options.tools.map((tool) => [tool.definition.name, tool]));
     this.maxTurns = options.maxTurns ?? 12;
-    this.messages = [{ role: "system", content: options.systemPrompt }];
+    this.messages = [{ role: "system", content: options.systemPrompt }, ...(options.history ?? [])];
   }
 
   async *run(input: string): AsyncGenerator<AgentEvent> {

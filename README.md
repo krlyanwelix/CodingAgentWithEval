@@ -16,6 +16,8 @@ Optional environment variables: `OPENAI_BASE_URL` (defaults to OpenAI's v1 API) 
 
 The agent exposes three coding-agent file tools: `read`, `write`, and `edit`, plus `bash`. File tools are restricted to the current working directory. On Windows, `bash` looks for Git Bash in common installation paths (or `GIT_BASH_PATH`). If Git Bash is missing, it reports an install link and `winget` command; it does not silently install software or change the system.
 
+Sessions are persisted in SQLite at `data/agent.sqlite`. On startup, choose an existing session by number or enter `n` to create a new one. Set `SESSION_DB` to use another database path.
+
 ## Loop shape
 
 `Agent.run()` is an async event generator. It keeps a conversation message list, asks the model for its next message, executes all returned tool calls, appends tool results, and loops until there are no more tool calls. A turn limit prevents runaway loops; tool failures are returned to the model as tool results. The CLI is only a thin consumer of those events.
