@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Holy Agent</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">H</span><div><strong>Holy Agent</strong><small>Agent workspace</small></div></div>
+      <button id="new-session" class="new-session">＋ New session</button>
+      <div class="section-label">Sessions</div>
+      <div id="sessions" class="sessions"></div>
+      <div class="sidebar-foot"><span id="health-dot" class="status-dot"></span><span id="health-text">Connecting</span></div>
+    </aside>
+    <section class="workspace">
+      <header class="topbar"><div><div id="session-title" class="title">New session</div><div id="session-meta" class="meta">Ready</div></div><button id="refresh" class="icon-button" title="Refresh">↻</button></header>
+      <div id="messages" class="messages"><div class="empty-state"><div class="empty-icon">✦</div><h1>What can I help with?</h1><p>Start a conversation with your agent.</p></div></div>
+      <form id="composer" class="composer"><textarea id="input" rows="1" placeholder="Message your agent..." autocomplete="off"></textarea><button id="send" type="submit" title="Send">↑</button></form>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -83,3 +83,14 @@ The sidecar reads the project `.env` itself. `MEM0_AUTOSTART=true` lets the Type
 npm run build
 npm start
 ```
+
+## Web UI
+
+The lightweight web mode uses the TypeScript HTTP server, a static SPA, and SSE for streamed responses:
+
+```sh
+python memory-sidecar.py
+npm run dev:web
+```
+
+Open `http://127.0.0.1:3000`. For a production-style run, use `npm run build` followed by `npm run start:web`.
