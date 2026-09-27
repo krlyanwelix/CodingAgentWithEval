@@ -1,4 +1,4 @@
-# Tiny Agent Loop
+# Holy Agent
 
 A minimal TypeScript CLI agent inspired by pi-agent's agent loop: model response → tool calls → tool results → next model response → final answer.
 
@@ -23,6 +23,8 @@ Loaded Skill text is explicitly marked as untrusted reference material. It canno
 `tools/exa-search.ts` provides the `exa_search` web-search tool. Create an Exa API key, put it in `.env` as `EXA_API_KEY`, restart the agent, and ask a current-information question. The tool calls `https://api.exa.ai/search` directly and does not send the key to the model.
 
 Sessions are persisted in SQLite at `data/agent.sqlite`. Messages are stored as parent-linked nodes. On startup, choose an existing session, then press Enter to resume the latest node, use `r<number>` to resume a specific node, or `f<number>` to fork that node into a new session. Set `SESSION_DB` to use another database path.
+
+Long-term memory uses local LanceDB at `data/memory.lance`. Configure an OpenAI-compatible embeddings endpoint with `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, and `EMBEDDING_MODEL`. For NVIDIA Nemotron through OpenRouter, use `https://openrouter.ai/api/v1` and `nvidia/nemotron-3-embed-1b:free`. If `EMBEDDING_API_KEY` is blank, the app falls back to `OPENAI_API_KEY`; blank embedding model and base URL settings fall back to `text-embedding-3-small` and `OPENAI_BASE_URL`. Memories are explicitly added with `/remember <text>`; `/memories` lists them, `/memory-search <query>` tests semantic retrieval, `/forget <id>` deletes one, and `/clear-memory` asks for confirmation before deleting all. Up to five semantically relevant memories are added as untrusted reference context for each user prompt. There is no automatic memory extraction in this first version.
 
 ## Loop shape
 

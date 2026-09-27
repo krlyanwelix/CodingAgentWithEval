@@ -24,8 +24,9 @@ export class Agent {
     this.messages = [{ role: "system", content: options.systemPrompt }, ...(options.history ?? [])];
   }
 
-  async *run(input: string): AsyncGenerator<AgentEvent> {
-    this.messages.push({ role: "user", content: input });
+  async *run(input: string, context?: string): AsyncGenerator<AgentEvent> {
+    const content = context ? `${input}\n\n${context}` : input;
+    this.messages.push({ role: "user", content });
 
     try {
       for (let turn = 1; turn <= this.maxTurns; turn += 1) {
