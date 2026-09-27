@@ -1,6 +1,10 @@
 # Holy Agent
 
-A minimal TypeScript CLI agent inspired by pi-agent's agent loop: model response → tool calls → tool results → next model response → final answer.
+Minimal TypeScript CLI agent inspired by pi-agent:
+
+```text
+user -> model -> tools -> tool results -> model -> answer
+```
 
 ## Run
 
@@ -8,26 +12,74 @@ Requires Node.js 20+.
 
 ```sh
 npm install
-# Copy .env.example to .env and fill in your API key/model
+copy .env.example .env
 npm run dev
 ```
 
-Optional environment variables: `OPENAI_BASE_URL` (defaults to OpenAI's v1 API) and `MODEL` (defaults to `gpt-4o-mini`). The endpoint must support OpenAI Chat Completions tool calling.
+The chat model uses an OpenAI-compatible endpoint:
 
-The agent exposes three coding-agent file tools: `read`, `write`, and `edit`, plus `bash`. File tools are restricted to the current working directory. On Windows, `bash` looks for Git Bash in common installation paths (or `GIT_BASH_PATH`). If Git Bash is missing, it reports an install link and `winget` command; it does not silently install software or change the system.
+```env
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+MODEL=deepseek-chat
+```
 
-Additional tools and skills are loaded at startup. Put tool modules in `tools/` and export a `tool`, `tools`, or default value implementing the `Tool` interface. Put skill instructions in `skills/**/SKILL.md`; startup only loads each Skill's name and description. The full file is read on demand through the `load_skill` tool. Override these directories with `AGENT_TOOLS_DIR` and `AGENT_SKILLS_DIR`. The built-in tools are always loaded first.
+## Tools and Skills
 
-Loaded Skill text is explicitly marked as untrusted reference material. It cannot override system instructions, grant permissions, request secrets, or authorize tools. The `bash` tool requires an interactive `y/N` confirmation before execution; a declined command is returned to the model as cancelled.
+Built-in tools: `read`, `write`, `edit`, and `bash`. File tools stay inside the current working directory. Bash requires confirmation.
 
-`tools/exa-search.ts` provides the `exa_search` web-search tool. Create an Exa API key, put it in `.env` as `EXA_API_KEY`, restart the agent, and ask a current-information question. The tool calls `https://api.exa.ai/search` directly and does not send the key to the model.
+External tools go in `tools/`; Skills go in `skills/**/SKILL.md`. Skills use progressive disclosure: metadata is loaded at startup and full instructions are loaded through `load_skill`.
 
-Sessions are persisted in SQLite at `data/agent.sqlite`. Messages are stored as parent-linked nodes. On startup, choose an existing session, then press Enter to resume the latest node, use `r<number>` to resume a specific node, or `f<number>` to fork that node into a new session. Set `SESSION_DB` to use another database path.
+```env
+AGENT_TOOLS_DIR=tools
+AGENT_SKILLS_DIR=skills
+EXA_API_KEY=...
+```
 
-Long-term memory uses local LanceDB at `data/memory.lance`. Configure an OpenAI-compatible embeddings endpoint with `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, and `EMBEDDING_MODEL`. For NVIDIA Nemotron through OpenRouter, use `https://openrouter.ai/api/v1` and `nvidia/nemotron-3-embed-1b:free`. If `EMBEDDING_API_KEY` is blank, the app falls back to `OPENAI_API_KEY`; blank embedding model and base URL settings fall back to `text-embedding-3-small` and `OPENAI_BASE_URL`. Memories are explicitly added with `/remember <text>`; `/memories` lists them, `/memory-search <query>` tests semantic retrieval, `/forget <id>` deletes one, and `/clear-memory` asks for confirmation before deleting all. Up to five semantically relevant memories are added as untrusted reference context for each user prompt. There is no automatic memory extraction in this first version.
+## Sessions
 
-## Loop shape
+Sessions are stored as a tree in SQLite at `data/agent.sqlite`. On startup, choose a session, then resume a node with `r<number>` or fork it with `f<number>`.
 
-`Agent.run()` is an async event generator. It keeps a conversation message list, asks the model for its next message, executes all returned tool calls, appends tool results, and loops until there are no more tool calls. A turn limit prevents runaway loops; tool failures are returned to the model as tool results. The CLI is only a thin consumer of those events.
+## Mem0 Memory
 
-The OpenAI-compatible adapter supports streaming. Text is emitted as `text_delta` events and printed immediately by the CLI. Tool-call fragments are accumulated until a complete call is available, then the normal tool loop continues. Models without a `stream()` implementation use the non-streaming `complete()` fallback.
+Long-term memory runs in the local Python Mem0 sidecar. Mem0 performs extraction, deduplication, conflict updates, and retrieval; its embedded Qdrant store persists vectors locally.
+
+Install and run the sidecar:
+
+```sh
+python -m pip install -r requirements-mem0.txt
+python memory-sidecar.py
+```
+
+Configure OpenRouter NVIDIA embeddings and the LLM used by Mem0:
+
+```env
+OPENROUTER_API_KEY=...
+# EMBEDDING_API_KEY=...        # legacy alias also accepted
+EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b:free
+MEM0_LLM_API_KEY=...
+MEM0_LLM_BASE_URL=https://api.deepseek.com/v1
+MEM0_LLM_MODEL=deepseek-chat
+MEM0_VECTOR_PATH=data/mem0-qdrant
+MEM0_EMBEDDING_DIMS=2048
+```
+
+The TypeScript agent calls the sidecar before and after each turn. It also supports:
+
+```text
+/remember <text>
+/memories
+/memory-search <query>
+/forget <id>
+/clear-memory
+```
+
+The sidecar reads the project `.env` itself. `MEM0_AUTOSTART=true` lets the TypeScript process start it automatically.
+
+## Development
+
+```sh
+npm run build
+npm start
+```

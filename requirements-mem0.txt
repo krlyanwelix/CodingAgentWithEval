@@ -1,0 +1,4 @@
+mem0ai
+fastapi
+uvicorn
+python-dotenv
