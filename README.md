@@ -86,7 +86,7 @@ npm start
 
 ## Web UI
 
-The lightweight web mode uses the TypeScript HTTP server, a static SPA, and SSE for streamed responses:
+The lightweight web mode uses the TypeScript HTTP server, a static SPA, and SSE for streamed responses. New sessions can have a display-only name, and the sidebar shows/searches Mem0 long-term memories.
 
 ```sh
 python memory-sidecar.py

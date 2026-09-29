@@ -140,7 +140,10 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     return true;
   }
   if (path === "/api/sessions" && req.method === "POST") {
-    const sessionId = sessionStore.createSession();
+    const input = await body(req);
+    const displayName = typeof input.name === "string" ? input.name.trim() : "";
+    if (displayName.length > 120) throw new Error("Session name must be 120 characters or fewer");
+    const sessionId = sessionStore.createSession(displayName || undefined);
     json(res, 201, { sessionId });
     return true;
   }

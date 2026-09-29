@@ -9,18 +9,41 @@
 <body>
   <main class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">H</span><div><strong>Holy Agent</strong><small>Agent workspace</small></div></div>
-      <button id="new-session" class="new-session">＋ New session</button>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">HA</span><div><strong>Holy Agent</strong><small>Agent workspace</small></div></div>
+      <button id="new-session" class="new-session" type="button"><span aria-hidden="true">+</span> New session</button>
       <div class="section-label">Sessions</div>
-      <div id="sessions" class="sessions"></div>
+      <div id="sessions" class="sessions" aria-label="Sessions"></div>
+      <div class="memory-section">
+        <div class="section-heading"><span class="section-label">Long-term memory</span><button id="refresh-memories" class="text-button compact" type="button">Refresh</button></div>
+        <form id="memory-search" class="memory-search"><input id="memory-query" type="search" placeholder="Search memories" aria-label="Search memories"><button type="submit" class="text-button compact">Search</button></form>
+        <div id="memories" class="memories"><div class="memory-empty">No memories yet</div></div>
+      </div>
       <div class="sidebar-foot"><span id="health-dot" class="status-dot"></span><span id="health-text">Connecting</span></div>
     </aside>
     <section class="workspace">
-      <header class="topbar"><div><div id="session-title" class="title">New session</div><div id="session-meta" class="meta">Ready</div></div><button id="refresh" class="icon-button" title="Refresh">↻</button></header>
-      <div id="messages" class="messages"><div class="empty-state"><div class="empty-icon">✦</div><h1>What can I help with?</h1><p>Start a conversation with your agent.</p></div></div>
-      <form id="composer" class="composer"><textarea id="input" rows="1" placeholder="Message your agent..." autocomplete="off"></textarea><button id="send" type="submit" title="Send">↑</button></form>
+      <header class="topbar"><div><div id="session-title" class="title">New session</div><div id="session-meta" class="meta">Ready</div></div><button id="refresh" class="text-button" type="button">Refresh</button></header>
+      <div id="messages" class="messages"><div class="empty-state"><div class="empty-icon" aria-hidden="true">+</div><h1>What can I help with?</h1><p>Start a conversation with your agent.</p></div></div>
+      <form id="composer" class="composer"><textarea id="input" rows="1" placeholder="Message your agent..." autocomplete="off"></textarea><button id="send" type="submit" class="send-button">Send</button></form>
     </section>
   </main>
+  <dialog id="session-dialog" class="session-dialog">
+    <form id="session-form" method="dialog">
+      <h2>New session</h2>
+      <p>Choose a name for this session. It is only used for display.</p>
+      <label for="session-name">Session name</label>
+      <input id="session-name" name="name" maxlength="120" placeholder="e.g. Product research" autocomplete="off">
+      <div class="dialog-actions"><button id="cancel-session" value="cancel" type="button">Cancel</button><button class="primary" value="create" type="submit">Create session</button></div>
+    </form>
+  </dialog>
+  <dialog id="tree-dialog" class="tree-dialog">
+    <div class="tree-dialog-header"><div><h2 id="tree-title">Session tree</h2><p id="tree-subtitle">Choose a node to resume or fork.</p></div><button id="close-tree" class="text-button compact" type="button">Close</button></div>
+    <div id="tree" class="tree" aria-live="polite"></div>
+  </dialog>
+  <div id="session-menu" class="session-menu" role="menu" hidden>
+    <button type="button" data-action="tree" role="menuitem">View session tree</button>
+    <button type="button" data-action="resume" role="menuitem">Resume latest node</button>
+    <button type="button" data-action="fork" role="menuitem">Fork latest node</button>
+  </div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

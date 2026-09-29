@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Message } from "./types.js";
 
-export interface SessionSummary { id: string; createdAt: string; updatedAt: string; nodeCount: number; }
+export interface SessionSummary { id: string; displayName: string | null; createdAt: string; updatedAt: string; nodeCount: number; }
 export interface NodeSummary { id: string; parentId: string | null; role: Message["role"]; content: string | null; createdAt: string; }
 
 /** SQLite persistence boundary. Each message is a node and parent_id forms the conversation tree. */
@@ -15,22 +15,27 @@ export class SessionStore {
     mkdirSync(dirname(filename), { recursive: true });
     this.db = new Database(filename);
     this.db.pragma("journal_mode = WAL");
-    this.db.exec(`CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, display_name TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       parent_id TEXT REFERENCES nodes(id), role TEXT NOT NULL, content TEXT, tool_call_id TEXT, tool_calls TEXT, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_nodes_session ON nodes(session_id, created_at);`);
+    const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    if (!sessionColumns.some((column) => column.name === "display_name")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN display_name TEXT");
+    }
   }
 
-  createSession(): string {
+  createSession(displayName?: string): string {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)").run(id, now, now);
+    const name = displayName?.trim().slice(0, 120) || null;
+    this.db.prepare("INSERT INTO sessions (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)").run(id, name, now, now);
     return id;
   }
 
   listSessions(): SessionSummary[] {
-    const rows = this.db.prepare("SELECT s.id, s.created_at, s.updated_at, COUNT(n.id) AS node_count FROM sessions s LEFT JOIN nodes n ON n.session_id = s.id GROUP BY s.id ORDER BY s.updated_at DESC").all() as Array<{ id: string; created_at: string; updated_at: string; node_count: number }>;
-    return rows.map((r) => ({ id: r.id, createdAt: r.created_at, updatedAt: r.updated_at, nodeCount: r.node_count }));
+    const rows = this.db.prepare("SELECT s.id, s.display_name, s.created_at, s.updated_at, COUNT(n.id) AS node_count FROM sessions s LEFT JOIN nodes n ON n.session_id = s.id GROUP BY s.id ORDER BY s.updated_at DESC").all() as Array<{ id: string; display_name: string | null; created_at: string; updated_at: string; node_count: number }>;
+    return rows.map((r) => ({ id: r.id, displayName: r.display_name, createdAt: r.created_at, updatedAt: r.updated_at, nodeCount: r.node_count }));
   }
 
   listNodes(sessionId: string): NodeSummary[] {
@@ -59,7 +64,7 @@ export class SessionStore {
   }
 
   forkFromNode(nodeId: string): { sessionId: string; nodeId: string } {
-    const sessionId = this.createSession();
+    const sessionId = this.createSession("Forked session");
     let parent: string | null = null;
     for (const message of this.getPath(nodeId)) parent = this.appendNode(sessionId, parent, message);
     return { sessionId, nodeId: parent as string };
