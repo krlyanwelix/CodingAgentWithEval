@@ -13,11 +13,14 @@
       <button id="new-session" class="new-session" type="button"><span aria-hidden="true">+</span> New session</button>
       <div class="section-label">Sessions</div>
       <div id="sessions" class="sessions" aria-label="Sessions"></div>
-      <div class="memory-section">
-        <div class="section-heading"><span class="section-label">Long-term memory</span><button id="refresh-memories" class="text-button compact" type="button">Refresh</button></div>
-        <form id="memory-search" class="memory-search"><input id="memory-query" type="search" placeholder="Search memories" aria-label="Search memories"><button type="submit" class="text-button compact">Search</button></form>
-        <div id="memories" class="memories"><div class="memory-empty">No memories yet</div></div>
-      </div>
+      <details id="memory-panel" class="memory-section">
+        <summary><span>Long-term memory</span><span class="memory-summary-side"><span id="memory-count" class="memory-count">-</span><span class="memory-chevron" aria-hidden="true"></span></span></summary>
+        <div class="memory-panel-body">
+          <div class="memory-toolbar"><span>Saved facts and preferences</span><button id="refresh-memories" class="text-button compact" type="button">Refresh</button></div>
+          <form id="memory-search" class="memory-search"><input id="memory-query" type="search" placeholder="Search memories" aria-label="Search memories"><button type="submit" class="text-button compact">Search</button></form>
+          <div id="memories" class="memories"><div class="memory-empty">Open this panel to load memories</div></div>
+        </div>
+      </details>
       <div class="sidebar-foot"><span id="health-dot" class="status-dot"></span><span id="health-text">Connecting</span></div>
     </aside>
     <section class="workspace">
@@ -36,13 +39,21 @@
     </form>
   </dialog>
   <dialog id="tree-dialog" class="tree-dialog">
-    <div class="tree-dialog-header"><div><h2 id="tree-title">Session tree</h2><p id="tree-subtitle">Choose a node to resume or fork.</p></div><button id="close-tree" class="text-button compact" type="button">Close</button></div>
+    <div class="tree-dialog-header"><div><h2 id="tree-title">Session tree</h2><p id="tree-subtitle">Hover over a node to view details.</p></div><button id="close-tree" class="text-button compact" type="button">Close</button></div>
     <div id="tree" class="tree" aria-live="polite"></div>
+  </dialog>
+  <dialog id="delete-session-dialog" class="session-dialog delete-session-dialog">
+    <form id="delete-session-form" method="dialog">
+      <h2>Delete session?</h2>
+      <p>This permanently deletes <strong id="delete-session-name">this session</strong> and every turn in its conversation tree.</p>
+      <div class="dialog-actions"><button id="cancel-delete-session" type="button">Cancel</button><button id="confirm-delete-session" class="danger" type="submit">Delete session</button></div>
+    </form>
   </dialog>
   <div id="session-menu" class="session-menu" role="menu" hidden>
     <button type="button" data-action="tree" role="menuitem">View session tree</button>
     <button type="button" data-action="resume" role="menuitem">Resume latest node</button>
     <button type="button" data-action="fork" role="menuitem">Fork latest node</button>
+    <button type="button" class="danger" data-action="delete" role="menuitem">Delete session</button>
   </div>
   <script type="module" src="/app.js"></script>
 </body>

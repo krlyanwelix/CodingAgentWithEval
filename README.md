@@ -38,7 +38,7 @@ EXA_API_KEY=...
 
 ## Sessions
 
-Sessions are stored as a tree in SQLite at `data/agent.sqlite`. On startup, choose a session, then resume a node with `r<number>` or fork it with `f<number>`.
+Sessions are stored as a tree in SQLite at `data/agent.sqlite`. Each node is one complete turn containing the user's question, the agent's final answer, and the names of tools used. On startup, choose a session, then resume a turn with `r<number>` or fork it with `f<number>`.
 
 ## Mem0 Memory
 

@@ -4,10 +4,45 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Message } from "./types.js";
 
-export interface SessionSummary { id: string; displayName: string | null; createdAt: string; updatedAt: string; nodeCount: number; }
-export interface NodeSummary { id: string; parentId: string | null; role: Message["role"]; content: string | null; createdAt: string; }
+export interface SessionSummary {
+  id: string;
+  displayName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  nodeCount: number;
+}
 
-/** SQLite persistence boundary. Each message is a node and parent_id forms the conversation tree. */
+export interface TurnNodeSummary {
+  id: string;
+  parentId: string | null;
+  userContent: string;
+  assistantContent: string | null;
+  toolNames: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TurnRow {
+  id: string;
+  session_id: string;
+  parent_id: string | null;
+  user_content: string;
+  assistant_content: string | null;
+  tool_names: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseToolNames(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** SQLite persistence boundary. Each tree node is one complete user/assistant turn. */
 export class SessionStore {
   private readonly db: Database.Database;
 
@@ -15,10 +50,27 @@ export class SessionStore {
     mkdirSync(dirname(filename), { recursive: true });
     this.db = new Database(filename);
     this.db.pragma("journal_mode = WAL");
-    this.db.exec(`CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, display_name TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      parent_id TEXT REFERENCES nodes(id), role TEXT NOT NULL, content TEXT, tool_call_id TEXT, tool_calls TEXT, created_at TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS idx_nodes_session ON nodes(session_id, created_at);`);
+    this.db.pragma("foreign_keys = ON");
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        display_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS turns (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        parent_id TEXT REFERENCES turns(id),
+        user_content TEXT NOT NULL,
+        assistant_content TEXT,
+        tool_names TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_turns_parent ON turns(parent_id);
+    `);
     const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
     if (!sessionColumns.some((column) => column.name === "display_name")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN display_name TEXT");
@@ -33,42 +85,121 @@ export class SessionStore {
     return id;
   }
 
-  listSessions(): SessionSummary[] {
-    const rows = this.db.prepare("SELECT s.id, s.display_name, s.created_at, s.updated_at, COUNT(n.id) AS node_count FROM sessions s LEFT JOIN nodes n ON n.session_id = s.id GROUP BY s.id ORDER BY s.updated_at DESC").all() as Array<{ id: string; display_name: string | null; created_at: string; updated_at: string; node_count: number }>;
-    return rows.map((r) => ({ id: r.id, displayName: r.display_name, createdAt: r.created_at, updatedAt: r.updated_at, nodeCount: r.node_count }));
+  deleteSession(sessionId: string): boolean {
+    const transaction = this.db.transaction((id: string) => {
+      const exists = this.db.prepare("SELECT 1 FROM sessions WHERE id = ?").get(id);
+      if (!exists) return false;
+      // Detach the self-referencing turn tree first. This keeps deletion
+      // compatible with databases created before parent_id used CASCADE.
+      this.db.prepare("UPDATE turns SET parent_id = NULL WHERE session_id = ?").run(id);
+      this.db.prepare("DELETE FROM turns WHERE session_id = ?").run(id);
+      this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+      return true;
+    });
+    return transaction(sessionId);
   }
 
-  listNodes(sessionId: string): NodeSummary[] {
-    const rows = this.db.prepare("SELECT id, parent_id, role, content, created_at FROM nodes WHERE session_id = ? ORDER BY created_at, rowid").all(sessionId) as Array<{ id: string; parent_id: string | null; role: Message["role"]; content: string | null; created_at: string }>;
-    return rows.map((r) => ({ id: r.id, parentId: r.parent_id, role: r.role, content: r.content, createdAt: r.created_at }));
+  listSessions(): SessionSummary[] {
+    const rows = this.db.prepare(`
+      SELECT s.id, s.display_name, s.created_at, s.updated_at, COUNT(t.id) AS node_count
+      FROM sessions s
+      LEFT JOIN turns t ON t.session_id = s.id
+      GROUP BY s.id
+      ORDER BY s.updated_at DESC
+    `).all() as Array<{ id: string; display_name: string | null; created_at: string; updated_at: string; node_count: number }>;
+    return rows.map((row) => ({
+      id: row.id,
+      displayName: row.display_name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      nodeCount: row.node_count,
+    }));
+  }
+
+  listNodes(sessionId: string): TurnNodeSummary[] {
+    const rows = this.db.prepare(`
+      SELECT id, session_id, parent_id, user_content, assistant_content, tool_names, created_at, updated_at
+      FROM turns
+      WHERE session_id = ?
+      ORDER BY created_at, rowid
+    `).all(sessionId) as TurnRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      parentId: row.parent_id,
+      userContent: row.user_content,
+      assistantContent: row.assistant_content,
+      toolNames: parseToolNames(row.tool_names),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   getPath(nodeId: string): Message[] {
-    const rows: Array<{ parent_id: string | null; role: Message["role"]; content: string | null; tool_call_id: string | null; tool_calls: string | null }> = [];
-    let current: string | null = nodeId;
-    while (current) {
-      const row = this.db.prepare("SELECT parent_id, role, content, tool_call_id, tool_calls FROM nodes WHERE id = ?").get(current) as ({ parent_id: string | null; role: Message["role"]; content: string | null; tool_call_id: string | null; tool_calls: string | null } | undefined);
-      if (!row) throw new Error(`Node not found: ${current}`);
-      rows.push(row);
-      current = row.parent_id;
+    const turns = this.getTurnPath(nodeId);
+    const messages: Message[] = [];
+    for (const turn of turns) {
+      messages.push({ role: "user", content: turn.user_content });
+      if (turn.assistant_content !== null) messages.push({ role: "assistant", content: turn.assistant_content });
     }
-    return rows.reverse().map((row) => ({ role: row.role, content: row.content, ...(row.tool_call_id ? { tool_call_id: row.tool_call_id } : {}), ...(row.tool_calls ? { tool_calls: JSON.parse(row.tool_calls) } : {}) }));
+    return messages;
   }
 
-  appendNode(sessionId: string, parentId: string | null, message: Message): string {
+  createTurn(sessionId: string, parentId: string | null, userContent: string): string {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO nodes (id, session_id, parent_id, role, content, tool_call_id, tool_calls, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, sessionId, parentId, message.role, message.content, message.tool_call_id ?? null, message.tool_calls ? JSON.stringify(message.tool_calls) : null, now);
+    this.db.prepare(`
+      INSERT INTO turns (id, session_id, parent_id, user_content, assistant_content, tool_names, created_at, updated_at)
+      VALUES (?, ?, ?, ?, NULL, '[]', ?, ?)
+    `).run(id, sessionId, parentId, userContent, now, now);
     this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
     return id;
   }
 
-  forkFromNode(nodeId: string): { sessionId: string; nodeId: string } {
-    const sessionId = this.createSession("Forked session");
-    let parent: string | null = null;
-    for (const message of this.getPath(nodeId)) parent = this.appendNode(sessionId, parent, message);
-    return { sessionId, nodeId: parent as string };
+  completeTurn(nodeId: string, assistantContent: string | null, toolNames: string[]): void {
+    const now = new Date().toISOString();
+    const uniqueToolNames = [...new Set(toolNames.filter(Boolean))];
+    const result = this.db.prepare(`
+      UPDATE turns
+      SET assistant_content = ?, tool_names = ?, updated_at = ?
+      WHERE id = ?
+    `).run(assistantContent, JSON.stringify(uniqueToolNames), now, nodeId);
+    if (result.changes !== 1) throw new Error(`Turn not found: ${nodeId}`);
+    this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = (SELECT session_id FROM turns WHERE id = ?)").run(now, nodeId);
   }
 
-  close(): void { this.db.close(); }
+  forkFromNode(nodeId: string): { sessionId: string; nodeId: string } {
+    const sourceTurns = this.getTurnPath(nodeId);
+    const sessionId = this.createSession("Forked session");
+    let parentId: string | null = null;
+    for (const turn of sourceTurns) {
+      const copiedId = this.createTurn(sessionId, parentId, turn.user_content);
+      this.completeTurn(copiedId, turn.assistant_content, parseToolNames(turn.tool_names));
+      parentId = copiedId;
+    }
+    if (!parentId) throw new Error(`Turn not found: ${nodeId}`);
+    return { sessionId, nodeId: parentId };
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  private getTurnPath(nodeId: string): TurnRow[] {
+    const rows: TurnRow[] = [];
+    const seen = new Set<string>();
+    let currentId: string | null = nodeId;
+    while (currentId) {
+      if (seen.has(currentId)) throw new Error(`Cycle detected at turn: ${currentId}`);
+      seen.add(currentId);
+      const row = this.db.prepare(`
+        SELECT id, session_id, parent_id, user_content, assistant_content, tool_names, created_at, updated_at
+        FROM turns
+        WHERE id = ?
+      `).get(currentId) as TurnRow | undefined;
+      if (!row) throw new Error(`Turn not found: ${currentId}`);
+      rows.push(row);
+      currentId = row.parent_id;
+    }
+    return rows.reverse();
+  }
 }
