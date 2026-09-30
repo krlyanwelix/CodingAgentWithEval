@@ -8,6 +8,8 @@ const state = {
   memoriesLoaded: false,
   contextSessionId: null,
   deleteSessionId: null,
+  sessionFilter: "",
+  toastTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -66,6 +68,24 @@ function preview(content) {
   return text.length > 150 ? `${text.slice(0, 150)}...` : text || "Empty message";
 }
 
+function notify(message) {
+  const toast = $("toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add("visible");
+  window.clearTimeout(state.toastTimer);
+  state.toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2600);
+}
+
+function setDrawer(name, open) {
+  const sidebar = $("sessions-drawer");
+  const context = $("context-panel");
+  if (name === "sessions") sidebar.classList.toggle("open", open);
+  if (name === "context") context.classList.toggle("open", open);
+  const anyOpen = sidebar.classList.contains("open") || context.classList.contains("open");
+  $("drawer-scrim").classList.toggle("visible", anyOpen);
+}
+
 function renderSessions() {
   sessionsEl.replaceChildren();
   if (!state.sessions.length) {
@@ -76,8 +96,10 @@ function renderSessions() {
     return;
   }
   for (const session of state.sessions) {
+    const matches = `${sessionName(session)} ${session.lastMessage || ""}`.toLowerCase().includes(state.sessionFilter.toLowerCase());
     const item = document.createElement("div");
     item.className = `session-item ${session.id === state.sessionId ? "active" : ""}`;
+    item.hidden = !matches;
     item.setAttribute("aria-current", session.id === state.sessionId ? "true" : "false");
     const button = document.createElement("button");
     button.type = "button";
@@ -221,6 +243,7 @@ function nodePath(nodes, nodeId) {
 }
 
 function renderCurrentPath() {
+  renderContextPath();
   if (!state.nodes.length || !state.nodeId) {
     showEmptyState();
     return;
@@ -230,6 +253,36 @@ function renderCurrentPath() {
     addMessage("user", node.userContent);
     if (node.assistantContent !== null) addMessage("assistant", node.assistantContent, node.toolNames || []);
   }
+}
+
+function renderContextPath() {
+  const pathList = $("path-list");
+  if (!pathList) return;
+  const path = nodePath(state.nodes, state.nodeId);
+  pathList.replaceChildren();
+  if (!path.length) {
+    const entry = document.createElement("div");
+    entry.className = "path-entry";
+    entry.innerHTML = '<span class="path-node current"></span><span><strong>New conversation</strong><small>main branch</small></span>';
+    pathList.append(entry);
+    $("session-path").textContent = "main branch";
+    return;
+  }
+  path.forEach((node, index) => {
+    const entry = document.createElement("div");
+    entry.className = "path-entry";
+    const dot = document.createElement("span");
+    dot.className = `path-node ${index === path.length - 1 ? "current" : ""}`;
+    const labels = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = preview(node.userContent).slice(0, 43);
+    const meta = document.createElement("small");
+    meta.textContent = index === path.length - 1 ? "Current turn" : `Turn ${index + 1}`;
+    labels.append(title, meta);
+    entry.append(dot, labels);
+    pathList.append(entry);
+  });
+  $("session-path").textContent = path.length > 1 ? `${path.length} turns` : "main branch";
 }
 
 async function loadNodes(preferredNodeId = null) {
@@ -249,6 +302,7 @@ async function selectSession(id, preferredNodeId = null) {
   renderSessions();
   await loadNodes(preferredNodeId);
   sendEl.disabled = false;
+  setDrawer("sessions", false);
 }
 
 async function refreshSessions(select = true) {
@@ -617,6 +671,21 @@ async function handleSessionMenu(action) {
   if (action === "fork") await forkFromNode(sessionId, latest.id);
 }
 
+function exportCurrentSession() {
+  if (!state.sessionId) return notify("There is no conversation to export yet.");
+  const session = state.sessions.find((item) => item.id === state.sessionId);
+  const transcript = nodePath(state.nodes, state.nodeId).map((node) => [
+    `You: ${node.userContent || ""}`,
+    node.assistantContent ? `Holy Agent: ${node.assistantContent}` : "",
+  ].filter(Boolean).join("\n\n")).join("\n\n");
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(new Blob([`${session ? sessionName(session) : "Holy Agent session"}\n\n${transcript}`], { type: "text/plain" }));
+  anchor.download = `${(session ? sessionName(session) : "holy-agent-session").replace(/[^\p{L}\p{N}-]+/gu, "-").replace(/^-|-$/g, "") || "holy-agent-session"}.txt`;
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+  notify("Conversation exported.");
+}
+
 async function sendMessage(event) {
   event.preventDefault();
   const prompt = inputEl.value.trim();
@@ -665,6 +734,7 @@ async function sendMessage(event) {
     }
     await refreshSessions(false);
     await loadNodes(state.nodeId);
+    $("tool-count").textContent = toolNames.length ? String(toolNames.length) : "None";
     if (memoryPanel.open) await loadMemories(memoryQueryEl.value.trim());
     else {
       state.memoriesLoaded = false;
@@ -684,6 +754,60 @@ async function sendMessage(event) {
 $("composer").addEventListener("submit", sendMessage);
 $("new-session").addEventListener("click", openSessionDialog);
 $("refresh").addEventListener("click", () => refreshSessions());
+$("global-search").addEventListener("input", (event) => {
+  state.sessionFilter = event.currentTarget.value.trim();
+  renderSessions();
+});
+$("global-search").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const match = state.sessions.find((session) => `${sessionName(session)} ${session.lastMessage || ""}`.toLowerCase().includes(state.sessionFilter.toLowerCase()));
+  if (match) selectSession(match.id);
+});
+$("mobile-nav-toggle").addEventListener("click", () => setDrawer("sessions", !$("sessions-drawer").classList.contains("open")));
+$("mobile-context-toggle").addEventListener("click", () => setDrawer("context", !$("context-panel").classList.contains("open")));
+$("close-context").addEventListener("click", () => setDrawer("context", false));
+$("drawer-scrim").addEventListener("click", () => {
+  setDrawer("sessions", false);
+  setDrawer("context", false);
+});
+$("show-tree").addEventListener("click", () => state.sessionId && openTree(state.sessionId));
+$("context-tree").addEventListener("click", () => state.sessionId && openTree(state.sessionId));
+$("fork-session").addEventListener("click", async () => {
+  const latest = nodePath(state.nodes, state.nodeId).at(-1);
+  if (!state.sessionId || !latest) return notify("Send a message before creating a branch.");
+  try { await forkFromNode(state.sessionId, latest.id); notify("A new branch is ready."); }
+  catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+});
+$("session-actions").addEventListener("click", (event) => {
+  if (state.sessionId) openSessionMenu(event, state.sessionId);
+});
+$("export-session").addEventListener("click", () => exportCurrentSession());
+$("context-export").addEventListener("click", () => exportCurrentSession());
+$("attach-file").addEventListener("click", () => $("attachment-input").click());
+$("attachment-input").addEventListener("change", (event) => {
+  const file = event.currentTarget.files?.[0];
+  if (file) notify(`${file.name} attached. Attachments are not yet sent to the agent.`);
+  event.currentTarget.value = "";
+});
+document.querySelectorAll("[data-panel]").forEach((button) => button.addEventListener("click", () => {
+  const panel = button.dataset.panel;
+  if (panel === "memory") {
+    setDrawer("context", true);
+    memoryPanel.open = true;
+    if (!state.memoriesLoaded) loadMemories().catch(() => notify("Memories are unavailable right now."));
+  } else notify(`${button.textContent.trim()} will be available here.`);
+}));
+$("manage-capabilities").addEventListener("click", () => notify("Skills and tools are configured for this agent."));
+document.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    $("global-search").focus();
+  }
+  if (event.key === "Escape") {
+    setDrawer("sessions", false);
+    setDrawer("context", false);
+  }
+});
 $("session-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = sessionNameEl.value.trim();
@@ -769,3 +893,7 @@ request("/api/health").then((health) => {
   $("health-text").textContent = "Offline";
 });
 refreshSessions().catch((error) => { $("session-meta").textContent = error.message; });
+loadMemories().catch(() => {
+  memoryCountEl.textContent = "!";
+  memoriesEl.innerHTML = '<div class="memory-empty">Memories are unavailable right now.</div>';
+});

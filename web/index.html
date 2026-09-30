@@ -1,60 +1,95 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Holy Agent</title>
-  <link rel="stylesheet" href="/styles.css">
-</head>
-<body>
-  <main class="app-shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">HA</span><div><strong>Holy Agent</strong><small>Agent workspace</small></div></div>
-      <button id="new-session" class="new-session" type="button"><span aria-hidden="true">+</span> New session</button>
-      <div class="section-label">Sessions</div>
-      <div id="sessions" class="sessions" aria-label="Sessions"></div>
-      <details id="memory-panel" class="memory-section">
-        <summary><span>Long-term memory</span><span class="memory-summary-side"><span id="memory-count" class="memory-count">-</span><span class="memory-chevron" aria-hidden="true"></span></span></summary>
-        <div class="memory-panel-body">
-          <div class="memory-toolbar"><span>Saved facts and preferences</span><button id="refresh-memories" class="text-button compact" type="button">Refresh</button></div>
-          <form id="memory-search" class="memory-search"><input id="memory-query" type="search" placeholder="Search memories" aria-label="Search memories"><button type="submit" class="text-button compact">Search</button></form>
-          <div id="memories" class="memories"><div class="memory-empty">Open this panel to load memories</div></div>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f6f5" />
+    <title>Holy Agent</title>
+    <link rel="icon" href="/agent-avatar.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="globalbar">
+        <a class="brand" href="/" aria-label="Holy Agent home">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="brand-copy"><strong>Holy Agent</strong><small>Workspace</small></span>
+        </a>
+        <div class="global-search-wrap">
+          <span class="search-glyph" aria-hidden="true"></span>
+          <input id="global-search" type="search" placeholder="Search sessions, memories and tool output" aria-label="Search sessions, memories and tool output" />
+          <kbd>⌘ K</kbd>
         </div>
-      </details>
-      <div class="sidebar-foot"><span id="health-dot" class="status-dot"></span><span id="health-text">Connecting</span></div>
-    </aside>
-    <section class="workspace">
-      <header class="topbar"><div><div id="session-title" class="title">New session</div><div id="session-meta" class="meta">Ready</div></div><button id="refresh" class="text-button" type="button">Refresh</button></header>
-      <div id="messages" class="messages"><div class="empty-state"><div class="empty-icon" aria-hidden="true">+</div><h1>What can I help with?</h1><p>Start a conversation with your agent.</p></div></div>
-      <form id="composer" class="composer"><textarea id="input" rows="1" placeholder="Message your agent..." autocomplete="off"></textarea><button id="send" type="submit" class="send-button">Send</button></form>
-    </section>
-  </main>
-  <dialog id="session-dialog" class="session-dialog">
-    <form id="session-form" method="dialog">
-      <h2>New session</h2>
-      <p>Choose a name for this session. It is only used for display.</p>
-      <label for="session-name">Session name</label>
-      <input id="session-name" name="name" maxlength="120" placeholder="e.g. Product research" autocomplete="off">
-      <div class="dialog-actions"><button id="cancel-session" value="cancel" type="button">Cancel</button><button class="primary" value="create" type="submit">Create session</button></div>
-    </form>
-  </dialog>
-  <dialog id="tree-dialog" class="tree-dialog">
-    <div class="tree-dialog-header"><div><h2 id="tree-title">Session tree</h2><p id="tree-subtitle">Hover over a node to view details.</p></div><button id="close-tree" class="text-button compact" type="button">Close</button></div>
-    <div id="tree" class="tree" aria-live="polite"></div>
-  </dialog>
-  <dialog id="delete-session-dialog" class="session-dialog delete-session-dialog">
-    <form id="delete-session-form" method="dialog">
-      <h2>Delete session?</h2>
-      <p>This permanently deletes <strong id="delete-session-name">this session</strong> and every turn in its conversation tree.</p>
-      <div class="dialog-actions"><button id="cancel-delete-session" type="button">Cancel</button><button id="confirm-delete-session" class="danger" type="submit">Delete session</button></div>
-    </form>
-  </dialog>
-  <div id="session-menu" class="session-menu" role="menu" hidden>
-    <button type="button" data-action="tree" role="menuitem">View session tree</button>
-    <button type="button" data-action="resume" role="menuitem">Resume latest node</button>
-    <button type="button" data-action="fork" role="menuitem">Fork latest node</button>
-    <button type="button" class="danger" data-action="delete" role="menuitem">Delete session</button>
-  </div>
-  <script type="module" src="/app.js"></script>
-</body>
+        <div class="global-tools">
+          <button class="icon-button mobile-nav-trigger" id="mobile-nav-toggle" type="button" aria-label="Open sessions">☰</button>
+          <span class="health-indicator"><i id="health-dot" class="status-dot"></i><span id="health-text">Connecting…</span></span>
+          <span class="model-indicator"><i></i> deepseek-chat <span class="chevron-down"></span></span>
+          <button class="icon-button mobile-context-trigger" id="mobile-context-toggle" type="button" aria-label="Open context">☷</button>
+          <img class="user-avatar" src="/user-avatar.svg" alt="Your account" width="32" height="32" />
+        </div>
+      </header>
+
+      <aside class="sidebar" id="sessions-drawer" aria-label="Workspace navigation">
+        <button id="new-session" class="new-session" type="button"><span class="plus-mark">＋</span> New session <kbd>⌘ J</kbd></button>
+        <div class="sidebar-section-heading"><span>Recent sessions</span><button id="refresh" class="icon-button subtle" type="button" title="Refresh sessions" aria-label="Refresh sessions">↻</button></div>
+        <div id="sessions" class="sessions" aria-label="Sessions"></div>
+        <div class="workspace-links">
+          <div class="sidebar-section-heading"><span>Workspace</span></div>
+          <button class="nav-item" type="button" data-panel="files"><span class="nav-icon folder-icon"></span>Project files</button>
+          <button class="nav-item" type="button" data-panel="skills"><span class="nav-icon spark-icon">✳</span>Skills</button>
+          <button class="nav-item" type="button" data-panel="tools"><span class="nav-icon tool-icon">⌘</span>Tools</button>
+          <button class="nav-item" type="button" data-panel="memory"><span class="nav-icon memory-icon">◉</span>Long-term memory</button>
+        </div>
+        <div class="sidebar-foot"><span class="foot-avatar">S</span><span><strong>Workspace owner</strong><small>Personal plan</small></span><span class="foot-more">···</span></div>
+      </aside>
+
+      <section class="workspace" aria-label="Conversation workspace">
+        <header class="topbar">
+          <div class="conversation-heading">
+            <div class="breadcrumb"><span>Sessions</span><span class="breadcrumb-sep">/</span><strong id="session-title">Loading session…</strong></div>
+            <div class="meta-line"><span class="branch-symbol">⑂</span><span id="session-meta">Ready</span><span class="meta-divider"></span><span id="session-path">main branch</span></div>
+          </div>
+          <div class="topbar-actions">
+            <button class="text-button" id="show-tree" type="button"><span class="button-icon branch-symbol">⑂</span> Branches</button>
+            <button class="icon-button" id="session-actions" type="button" title="Session options" aria-label="Session options">···</button>
+            <button class="primary-small" id="fork-session" type="button"><span>⑂</span> Fork</button>
+          </div>
+        </header>
+        <div class="thread-toolbar"><span class="thread-label"><span class="thread-line-icon">☷</span> Conversation</span><button class="quiet-button" id="export-session" type="button">Export session <span>↗</span></button></div>
+        <section id="messages" class="messages" aria-live="polite" aria-label="Conversation messages"></section>
+        <form id="composer" class="composer">
+          <textarea id="input" rows="1" placeholder="Ask Holy Agent to build, inspect or explain…" aria-label="Message Holy Agent"></textarea>
+          <div class="composer-footer">
+            <div class="composer-tools"><button id="attach-file" class="icon-button" type="button" aria-label="Attach a file">＋</button><input id="attachment-input" class="sr-only" type="file" /><span class="composer-hint">Enter to send · Shift + Enter for a new line</span></div>
+            <div class="composer-submit"><span class="composer-model">deepseek-chat <span class="chevron-down"></span></span><button id="send" class="send-button" type="submit"><span>Send</span><span class="send-arrow">↑</span></button></div>
+          </div>
+        </form>
+        <p class="composer-disclaimer">Holy Agent can make mistakes. Review important changes before applying them.</p>
+      </section>
+
+      <aside class="context-sidebar" id="context-panel" aria-label="Session context">
+        <div class="context-header"><div><span class="context-overline">SESSION DETAILS</span><h2>Context</h2></div><button class="icon-button context-close" id="close-context" type="button" aria-label="Close context">×</button></div>
+        <section class="context-section path-section"><div class="context-section-title"><h3>Session path</h3><button class="text-link" id="context-tree" type="button">View tree</button></div><div class="path-list" id="path-list"><div class="path-entry"><span class="path-node current"></span><span><strong>Current conversation</strong><small>main branch</small></span></div></div></section>
+        <details id="memory-panel" class="memory-section" open>
+          <summary><span class="summary-title">Memories in context</span><span class="memory-count" id="memory-count">–</span><span class="memory-chevron"></span></summary>
+          <div class="memory-panel-body">
+            <div class="memory-toolbar"><span>Relevant to this workspace</span><button class="text-link" id="refresh-memories" type="button">Refresh</button></div>
+            <form id="memory-search" class="memory-search"><input id="memory-query" type="search" placeholder="Search memories" aria-label="Search memories" /><button type="submit" aria-label="Search memories"><span class="search-glyph"></span></button></form>
+            <div id="memories" class="memories"><div class="memory-empty">Memories appear here when available.</div></div>
+          </div>
+        </details>
+        <section class="context-section run-section"><div class="context-section-title"><h3>Run status</h3></div><div class="run-status"><span class="run-status-icon">✓</span><span><strong>Ready to work</strong><small>Agent is available</small></span></div><div class="run-detail"><span>Model</span><strong>deepseek-chat</strong></div><div class="run-detail"><span>Tools used</span><strong id="tool-count">—</strong></div></section>
+        <section class="context-section capability-section"><div class="context-section-title"><h3>Capabilities</h3><button class="text-link" id="manage-capabilities" type="button">Manage</button></div><div class="capability-row"><span class="capability-mark skill-mark">✳</span><span><strong>Skills</strong><small>Available for this session</small></span><span class="capability-chevron">›</span></div><div class="capability-row"><span class="capability-mark tool-mark">⌘</span><span><strong>Tools</strong><small>Connected to your agent</small></span><span class="capability-chevron">›</span></div></section>
+        <button class="context-bottom-link" id="context-export" type="button">Export conversation <span>↗</span></button>
+      </aside>
+      <button id="drawer-scrim" class="drawer-scrim" type="button" aria-label="Close navigation"></button>
+    </main>
+
+    <dialog id="session-dialog" class="session-dialog"><form id="session-form"><h2>New session</h2><p>Give this conversation a name, or leave it blank to name it later.</p><label for="session-name">Session name</label><input id="session-name" name="name" type="text" maxlength="120" placeholder="e.g. Refactor the settings page" /><div class="dialog-actions"><button id="cancel-session" type="button">Cancel</button><button class="primary" type="submit">Create session</button></div></form></dialog>
+    <dialog id="delete-session-dialog" class="session-dialog"><form id="delete-session-form"><h2>Delete session?</h2><p>This will permanently delete <strong id="delete-session-name">this session</strong> and its conversation history.</p><div class="dialog-actions"><button id="cancel-delete-session" type="button">Cancel</button><button id="confirm-delete-session" class="danger" type="submit">Delete session</button></div></form></dialog>
+    <dialog id="tree-dialog" class="tree-dialog"><header class="tree-dialog-header"><div><h2 id="tree-title">Session tree</h2><p id="tree-subtitle"></p></div><button id="close-tree" class="icon-button" type="button" aria-label="Close tree">×</button></header><div id="tree" class="tree"></div></dialog>
+    <div id="session-menu" class="session-menu" hidden><button type="button" data-action="resume">Resume latest turn</button><button type="button" data-action="fork">Fork latest turn</button><button type="button" data-action="tree">View session tree</button><button type="button" data-action="delete" class="danger">Delete session</button></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
 </html>
