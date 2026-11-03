@@ -1,6 +1,6 @@
-# Holy Agent
+# LilPiAgent
 
-Minimal TypeScript CLI agent inspired by pi-agent:
+LilPiAgent is a minimal TypeScript CLI agent inspired by pi-agent:
 
 ```text
 user -> model -> tools -> tool results -> model -> answer

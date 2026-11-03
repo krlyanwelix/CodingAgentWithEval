@@ -676,11 +676,11 @@ function exportCurrentSession() {
   const session = state.sessions.find((item) => item.id === state.sessionId);
   const transcript = nodePath(state.nodes, state.nodeId).map((node) => [
     `You: ${node.userContent || ""}`,
-    node.assistantContent ? `Holy Agent: ${node.assistantContent}` : "",
+    node.assistantContent ? `LilPiAgent: ${node.assistantContent}` : "",
   ].filter(Boolean).join("\n\n")).join("\n\n");
   const anchor = document.createElement("a");
-  anchor.href = URL.createObjectURL(new Blob([`${session ? sessionName(session) : "Holy Agent session"}\n\n${transcript}`], { type: "text/plain" }));
-  anchor.download = `${(session ? sessionName(session) : "holy-agent-session").replace(/[^\p{L}\p{N}-]+/gu, "-").replace(/^-|-$/g, "") || "holy-agent-session"}.txt`;
+  anchor.href = URL.createObjectURL(new Blob([`${session ? sessionName(session) : "LilPiAgent session"}\n\n${transcript}`], { type: "text/plain" }));
+  anchor.download = `${(session ? sessionName(session) : "lilpiagent-session").replace(/[^\p{L}\p{N}-]+/gu, "-").replace(/^-|-$/g, "") || "lilpiagent-session"}.txt`;
   anchor.click();
   URL.revokeObjectURL(anchor.href);
   notify("Conversation exported.");

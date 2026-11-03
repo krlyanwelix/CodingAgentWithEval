@@ -90,7 +90,7 @@ def as_dict(model: BaseModel) -> dict[str, Any]:
     return dump() if callable(dump) else model.dict()
 
 
-app = FastAPI(title="HolyAgent Mem0 Memory")
+app = FastAPI(title="LilPiAgent Mem0 Memory")
 memory: Memory | None = None
 
 

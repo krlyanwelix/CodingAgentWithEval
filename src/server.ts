@@ -232,6 +232,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, host, () => console.log(`Holy Agent web UI: http://${host}:${port}`));
+server.listen(port, host, () => console.log(`LilPiAgent web UI: http://${host}:${port}`));
 process.on("SIGINT", () => { sessionStore.close(); mem0.close(); server.close(() => process.exit(0)); });
 process.on("SIGTERM", () => { sessionStore.close(); mem0.close(); server.close(() => process.exit(0)); });

@@ -182,7 +182,7 @@ button:disabled { cursor: default; opacity: .55; }
   .tree { padding-inline: 14px; }
 }
 
-/* Holy Agent workspace redesign */
+/* LilPiAgent workspace redesign */
 :root {
   --bg: #f6f6f5;
   --panel: #fff;
