@@ -134,6 +134,292 @@ export const evalTasks: EvalTask[] = [
         "node -e \"const {toRoman,fromRoman}=require('./src/roman.js');if(toRoman(3999)!=='MMMCMXCIX')process.exit(1);if(fromRoman('IV')!==4)process.exit(1);let ok=false;try{toRoman(0)}catch(e){ok=e instanceof RangeError}process.exit(ok?0:1)\" && node --test src/roman.test.js",
       ),
   },
+  {
+    id: "bugfix-binary-search",
+    title: "修好越界的有序数组查找",
+    prompt:
+      "src/search.test.js 有失败用例。请只修 src/search.js，不要改测试，修好后运行 node --test src/search.test.js 确认。",
+    seed: {
+      "src/search.js": `function binarySearch(values, target) {
+  let low = 0;
+  let high = values.length;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (values[mid] === target) return mid;
+    if (values[mid] < target) low = mid + 1;
+    else high = mid - 1;
+  }
+  return -1;
+}
+
+module.exports = { binarySearch };
+`,
+      "src/search.test.js": `const test = require("node:test");
+const assert = require("node:assert");
+const { binarySearch } = require("./search.js");
+
+test("finds the first element", () => assert.strictEqual(binarySearch([1, 3, 5], 1), 0));
+test("finds the middle element", () => assert.strictEqual(binarySearch([1, 3, 5], 5), 2));
+test("finds a large value", () => assert.strictEqual(binarySearch([2, 4, 8, 16], 16), 3));
+test("returns -1 when missing", () => assert.strictEqual(binarySearch([1, 3, 5], 4), -1));
+test("handles the empty array", () => assert.strictEqual(binarySearch([], 7), -1));
+`,
+    },
+    check: (dir) => run(dir, "node --test src/search.test.js"),
+  },
+  {
+    id: "json-skip-bad-lines",
+    title: "让 JSONL 解析跳过坏行",
+    prompt:
+      "src/lines.js 的 parseLines 遇到坏 JSON 会直接抛错。需求是跳过坏行、返回 { records, skipped }，skipped 是坏行数量。请修 src/lines.js，不要改测试，然后运行 node --test src/lines.test.js。",
+    seed: {
+      "src/lines.js": `function parseLines(text) {
+  return text.split("\\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+module.exports = { parseLines };
+`,
+      "src/lines.test.js": `const test = require("node:test");
+const assert = require("node:assert");
+const { parseLines } = require("./lines.js");
+
+test("parses clean input", () => {
+  const result = parseLines('{"a":1}\\n{"b":2}');
+  assert.deepStrictEqual(result.records, [{ a: 1 }, { b: 2 }]);
+  assert.strictEqual(result.skipped, 0);
+});
+
+test("skips malformed lines", () => {
+  const result = parseLines('{"a":1}\\nnot json\\n{"c":3}\\n{broken');
+  assert.deepStrictEqual(result.records, [{ a: 1 }, { c: 3 }]);
+  assert.strictEqual(result.skipped, 2);
+});
+`,
+    },
+    check: (dir) => run(dir, "node --test src/lines.test.js"),
+  },
+  {
+    id: "edit-second-occurrence",
+    title: "只改第二个同名的配置项",
+    prompt:
+      "src/config.js 里有两个对象都含有 `timeout: 1000`。只把 server 对象的 timeout 改成 5000，client 保持 1000，不要动其他内容。改完读回文件确认。",
+    seed: {
+      "src/config.js": `const server = {
+  host: "localhost",
+  timeout: 1000,
+};
+
+const client = {
+  host: "example.com",
+  timeout: 1000,
+};
+
+module.exports = { server, client };
+`,
+    },
+    check: (dir) =>
+      run(
+        dir,
+        "node -e \"const c=require('./src/config.js');if(c.server.timeout!==5000||c.client.timeout!==1000)process.exit(1)\"",
+      ),
+  },
+  {
+    id: "count-todos",
+    title: "跨文件统计 TODO",
+    prompt:
+      "统计 src 下所有 .md 文件里 TODO 出现的总次数，并列出包含 TODO 的文件名。只回答数字和文件名，不要修改任何文件。",
+    seed: {
+      "src/a.md": "TODO: one\nnormal\ntodo not counted (lowercase)\n",
+      "src/b.md": "TODO: two\nTODO: three\n",
+      "src/c.md": "nothing here\n",
+      "src/notes.txt": "TODO: outside md, ignored\n",
+      "src/d.md": "TODO: four\n",
+    },
+    check: (_dir, answer) => {
+      const hasCount = /\b4\b/.test(answer);
+      const files = ["a.md", "b.md", "d.md"].every((file) => answer.includes(file));
+      const noNoise = !answer.includes("notes.txt");
+      return hasCount && files && noNoise
+        ? { pass: true, detail: "count and file list are correct" }
+        : { pass: false, detail: `count=${hasCount} files=${files} noNoise=${noNoise}\n${answer.slice(0, 200)}` };
+    },
+  },
+  {
+    id: "multi-file-stats",
+    title: "新增统计模块和它的测试",
+    prompt:
+      "在 src/math/ 下新建 stats.js（CommonJS，导出 mean 和 median）和 stats.test.js（node:test，至少 4 个用例：空数组返回 NaN、单元素、偶数个元素取中间两个的平均、奇数个元素）。写完运行 node --test src/math/stats.test.js 直到通过。",
+    check: (dir) =>
+      run(
+        dir,
+        "node -e \"const s=require('./src/math/stats.js');if(!Number.isNaN(s.mean([])))process.exit(1);if(s.mean([1,2,3])!==2)process.exit(1);if(s.median([1,2,3,4])!==2.5)process.exit(1);if(s.median([3,1,2])!==2)process.exit(1)\" && node --test src/math/stats.test.js",
+      ),
+  },
+  {
+    id: "fix-null-guard",
+    title: "给格式化函数补空值保护",
+    prompt:
+      "src/format.js 的 formatUser 遇到 null 会崩溃，测试要求返回 \"anonymous\"。请修 src/format.js，不要改测试，修完运行 node --test src/format.test.js。",
+    seed: {
+      "src/format.js": `function formatUser(user) {
+  return user.name.toUpperCase();
+}
+
+module.exports = { formatUser };
+`,
+      "src/format.test.js": `const test = require("node:test");
+const assert = require("node:assert");
+const { formatUser } = require("./format.js");
+
+test("formats a name", () => assert.strictEqual(formatUser({ name: "ada" }), "ADA"));
+test("handles null", () => assert.strictEqual(formatUser(null), "anonymous"));
+test("handles missing name", () => assert.strictEqual(formatUser({}), "anonymous"));
+`,
+    },
+    check: (dir) => run(dir, "node --test src/format.test.js"),
+  },
+  {
+    id: "feature-lru-ttl",
+    title: "实现带容量和 TTL 的缓存",
+    prompt:
+      "src/lru.js 里只有空导出。请实现 createCache({ capacity, ttlMs })，提供 get(key)、set(key, value)、size()。规则：超过 capacity 时淘汰最久未使用的键；ttlMs 后条目过期（get 返回 undefined）；set 已存在的键会刷新它的顺序和计时。src/lru.test.js 已经写好，不要改测试，实现后运行 node --test src/lru.test.js 直到通过。",
+    seed: {
+      "src/lru.js": "module.exports = {};\n",
+      "src/lru.test.js": `const test = require("node:test");
+const assert = require("node:assert");
+const { createCache } = require("./lru.js");
+
+test("stores and reads values", () => {
+  const cache = createCache({ capacity: 2, ttlMs: 1000 });
+  cache.set("a", 1);
+  assert.strictEqual(cache.get("a"), 1);
+  assert.strictEqual(cache.size(), 1);
+});
+
+test("evicts the least recently used entry", () => {
+  const cache = createCache({ capacity: 2, ttlMs: 1000 });
+  cache.set("a", 1);
+  cache.set("b", 2);
+  cache.get("a");
+  cache.set("c", 3);
+  assert.strictEqual(cache.get("b"), undefined);
+  assert.strictEqual(cache.get("a"), 1);
+  assert.strictEqual(cache.get("c"), 3);
+});
+
+test("refresh moves the key to the front", () => {
+  const cache = createCache({ capacity: 2, ttlMs: 1000 });
+  cache.set("a", 1);
+  cache.set("b", 2);
+  cache.set("a", 9);
+  cache.set("c", 3);
+  assert.strictEqual(cache.get("b"), undefined);
+  assert.strictEqual(cache.get("a"), 9);
+});
+
+test("expires entries after the ttl", async () => {
+  const cache = createCache({ capacity: 2, ttlMs: 30 });
+  cache.set("a", 1);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.strictEqual(cache.get("a"), undefined);
+  assert.strictEqual(cache.size(), 0);
+});
+`,
+    },
+    check: (dir) => run(dir, "node --test src/lru.test.js"),
+  },
+  {
+    id: "concurrency-coalesce",
+    title: "合并并发的相同请求",
+    prompt:
+      "src/fetch-once.js 的 fetchOnce 现在每次都真正调用 fetchValue，导致并发同一 key 时调用多次。要求：同一个 key 在第一次请求完成前，后续调用共享同一个 Promise；失败后允许重试（下一次重新发起）。请修实现，src/fetch-once.test.js 是验收标准，不要改测试。",
+    seed: {
+      "src/fetch-once.js": `let calls = 0;
+
+async function fetchValue(key) {
+  calls += 1;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  if (key === "boom") throw new Error("boom");
+  return key.toUpperCase() + "-" + calls;
+}
+
+async function fetchOnce(key) {
+  return fetchValue(key);
+}
+
+function callCount() {
+  return calls;
+}
+
+module.exports = { fetchOnce, callCount };
+`,
+      "src/fetch-once.test.js": `const test = require("node:test");
+const assert = require("node:assert");
+const { fetchOnce, callCount } = require("./fetch-once.js");
+
+test("concurrent calls for one key hit the source once", async () => {
+  const [a, b, c] = await Promise.all([fetchOnce("x"), fetchOnce("x"), fetchOnce("x")]);
+  assert.strictEqual(a, b);
+  assert.strictEqual(b, c);
+  assert.strictEqual(callCount(), 1);
+});
+
+test("different keys run independently", async () => {
+  const before = callCount();
+  await Promise.all([fetchOnce("y"), fetchOnce("z")]);
+  assert.strictEqual(callCount() - before, 2);
+});
+
+test("retries after a failure", async () => {
+  const before = callCount();
+  await assert.rejects(fetchOnce("boom"), /boom/);
+  await assert.rejects(fetchOnce("boom"), /boom/);
+  assert.strictEqual(callCount() - before, 2);
+});
+`,
+    },
+    check: (dir) => run(dir, "node --test src/fetch-once.test.js"),
+  },
+  {
+    id: "perf-comparisons",
+    title: "把线性查找改成对数复杂度",
+    prompt:
+      "src/lookup.js 的 findIndex 是线性扫描。src/lookup.test.js 会统计比较次数，要求 2000 个有序元素最多 12 次比较。请改成二分查找（数组已排序），不要改测试，运行 node --test src/lookup.test.js 验证。",
+    seed: {
+      "src/lookup.js": `let comparisons = 0;
+
+function findIndex(values, target) {
+  for (let index = 0; index < values.length; index += 1) {
+    comparisons += 1;
+    if (values[index] === target) return index;
+  }
+  return -1;
+}
+
+function comparisonCount() {
+  return comparisons;
+}
+
+module.exports = { findIndex, comparisonCount };
+`,
+      "src/lookup.test.js": `const test = require("node:test");
+const assert = require("node:assert");
+const { findIndex, comparisonCount } = require("./lookup.js");
+
+test("finds a value with few comparisons", () => {
+  const values = Array.from({ length: 2000 }, (_, index) => index * 2);
+  assert.strictEqual(findIndex(values, 1998), 999);
+  assert.ok(comparisonCount() <= 12, "comparisons: " + comparisonCount());
+});
+
+test("reports -1 for a missing value", () => {
+  const values = Array.from({ length: 2000 }, (_, index) => index * 2);
+  assert.strictEqual(findIndex(values, 1999), -1);
+});
+`,
+    },
+    check: (dir) => run(dir, "node --test src/lookup.test.js"),
+  },
 ];
 
 export function selectTasks(spec: string): EvalTask[] {
