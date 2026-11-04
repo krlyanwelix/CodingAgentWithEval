@@ -14,6 +14,8 @@ export interface EvalTask {
   prompt: string;
   /** Files copied into the sandbox before the run. */
   seed?: Record<string, string>;
+  /** Held out from the default suite, so tuning cannot overfit to it. */
+  holdout?: boolean;
   check: (dir: string, answer: string) => CheckResult;
 }
 
@@ -77,6 +79,59 @@ function scoreTotal(scores) {
 
 module.exports = { priceWithTax, scoreTotal };
 `;
+
+function buildPatchCase(): { seed: string; target: string[]; prompt: string } {
+  const head: string[] = [];
+  for (let index = 1; index <= 20; index += 1) {
+    head.push(`// section ${index}: keep this line untouched`);
+    head.push(`export function read${index}() { return ${index}; }`);
+  }
+  const legacy = [
+    "// legacy summary (replace this whole region)",
+    "export function average(values) {",
+    "  let total = 0;",
+    "  for (const value of values) {",
+    "    total = total + value;",
+    "  }",
+    "  return total / values.length;",
+    "}",
+    "",
+    "// end of legacy summary",
+    "",
+    "export const VERSION = 1;",
+  ];
+  const tail: string[] = [];
+  for (let index = 21; index <= 34; index += 1) {
+    tail.push(`// section ${index}: keep this line untouched`);
+    tail.push(`export function read${index}() { return ${index}; }`);
+  }
+  const target = [
+    "// median summary (replace this whole region)",
+    "export function median(values) {",
+    "  if (values.length === 0) return 0;",
+    "  const sorted = [...values].sort((a, b) => a - b);",
+    "  const middle = Math.floor(sorted.length / 2);",
+    "  if (sorted.length % 2 === 1) return sorted[middle];",
+    "  return (sorted[middle - 1] + sorted[middle]) / 2;",
+    "}",
+    "",
+    "export const AVERAGE_VERSION = 2;",
+    "",
+    "export const MEDIAN_EXPORTED = true;",
+  ];
+  const seedLines = [...head, ...legacy, ...tail];
+  const prompt = [
+    "src/report.js 一共 80 行。请只把第 41 行到第 52 行（含，从 1 开始数）替换成下面这 12 行，",
+    "其余每一行必须逐字节保持不变，总行数仍然是 80，不要重新格式化、不要增删空行。",
+    "",
+    "```js",
+    ...target,
+    "```",
+  ].join("\n");
+  return { seed: `${seedLines.join("\n")}\n`, target, prompt };
+}
+
+const PATCH_CASE = buildPatchCase();
 
 export const evalTasks: EvalTask[] = [
   {
@@ -537,10 +592,41 @@ test("adds two numbers", () => {
       return { pass: true, detail: "ok" };
     },
   },
+  {
+    id: "exact-line-patch",
+    title: "按行号精确替换且其余字节不变",
+    holdout: true,
+    prompt: PATCH_CASE.prompt,
+    seed: { "src/report.js": PATCH_CASE.seed },
+    check: (dir) => {
+      const text = readFileSync(join(dir, "src/report.js"), "utf8");
+      const base = PATCH_CASE.seed.split("\n");
+      const expected = `${[...base.slice(0, 40), ...PATCH_CASE.target, ...base.slice(52, 80)].join("\n")}\n`;
+      if (text === expected) return { pass: true, detail: "ok" };
+      const actual = text.split("\n");
+      const wanted = expected.split("\n");
+      let firstDiff = 0;
+      for (let index = 0; index < Math.max(actual.length, wanted.length); index += 1) {
+        if (actual[index] !== wanted[index]) {
+          firstDiff = index;
+          break;
+        }
+      }
+      return {
+        pass: false,
+        detail: [
+          `期望 ${wanted.length - 1} 行，实际 ${actual.length - 1} 行，首个差异在第 ${firstDiff + 1} 行`,
+          `期望: ${JSON.stringify((wanted[firstDiff] ?? "").slice(0, 80))}`,
+          `实际: ${JSON.stringify((actual[firstDiff] ?? "").slice(0, 80))}`,
+        ].join("\n"),
+      };
+    },
+  },
 ];
 
 export function selectTasks(spec: string): EvalTask[] {
-  if (!spec || spec === "all") return evalTasks;
+  if (!spec || spec === "all") return evalTasks.filter((task) => !task.holdout);
+  if (spec === "holdout") return evalTasks.filter((task) => task.holdout);
   const ids = spec.split(",").map((item) => item.trim()).filter(Boolean);
   const selected = evalTasks.filter((task) => ids.includes(task.id));
   const missing = ids.filter((id) => !selected.some((task) => task.id === id));

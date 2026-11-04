@@ -98,6 +98,8 @@ export async function runEval(options: RunOptions): Promise<RunSummary> {
       const taskStarted = Date.now();
       let steps = 0;
 
+      let runError = "";
+      try {
       for await (const event of agent.run(task.prompt)) {
         if (event.type === "tool_start") {
           toolCalls.push(event.toolCall.function.name);
@@ -110,7 +112,13 @@ export async function runEval(options: RunOptions): Promise<RunSummary> {
         }
       }
 
-      const check = task.check(sandbox, answer);
+      } catch (error) {
+        runError = error instanceof Error ? error.message : String(error);
+      }
+
+      const check = runError
+        ? { pass: false, detail: `run failed: ${runError}` }
+        : task.check(sandbox, answer);
       const result: TaskResult = {
         id: task.id,
         pass: check.pass,
@@ -229,7 +237,7 @@ async function main(): Promise<void> {
   const summary = await runEval({
     tasks: selectTasks(args.get("tasks") ?? "all"),
     skillPath: args.get("skill"),
-    repeat: Number(args.get("repeat") ?? 1),
+    repeat: Number(args.get("repeat") ?? 3),
     jsonlPath: args.get("jsonl"),
     maxTurns: Number(args.get("max-turns") ?? 20),
   });

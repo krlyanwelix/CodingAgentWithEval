@@ -161,9 +161,11 @@ Open `http://127.0.0.1:3000`. For a production-style run, use `npm run build` fo
 ## 评测、轨迹与 skill 自进化
 
 ```powershell
-npm run eval                                    # 全部任务，结果写入 data/trajectories.jsonl
+npm run eval                                    # 全部任务（跳过 holdout），默认每次跑 3 遍取多数
 npm run eval -- --tasks=bugfix-duration         # 只跑一个任务
 npm run eval -- --skill=skills/coding-guide/SKILL.md
+npm run eval -- --repeat=5                   # 同一任务跑 5 次，按多数投票（默认 3 次）
+npm run eval -- --tasks=holdout              # 只跑留出的隐藏任务，调 prompt/skill 时不要看它
 npm run evolve -- --skill=skills/coding-guide/SKILL.md
 ```
 
