@@ -103,7 +103,8 @@ export const tools: Tool[] = [
       const offset = typeof input.offset === "number" ? Math.max(1, Math.floor(input.offset)) : 1;
       const limit = typeof input.limit === "number" ? Math.max(1, Math.floor(input.limit)) : undefined;
       const lines = text.split(/\r?\n/).slice(offset - 1, limit === undefined ? undefined : offset - 1 + limit);
-      return lines.map((line, index) => `${offset + index}: ${line}`).join("\n");
+      const body = lines.map((line, index) => `${offset + index}: ${line}`).join("\n");
+      return `${body}\n（行号 "N: " 只是显示用的，不属于文件内容；edit 的 oldText 不要包含它）`;
     },
   },
   {

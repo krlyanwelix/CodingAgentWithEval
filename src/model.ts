@@ -3,6 +3,7 @@ import type {
   Model,
   ModelRequestOptions,
   ModelStreamEvent,
+  SamplingOptions,
   ToolCall,
   ToolDefinition,
 } from "./types.js";
@@ -77,10 +78,13 @@ export class OpenAICompatibleModel implements Model {
     private readonly baseUrl = "https://api.openai.com/v1",
     /** Provider-specific fields, e.g. llama.cpp's chat_template_kwargs. */
     private readonly extraBody: Record<string, unknown> = {},
+    /** Sampling defaults; extraBody still wins when it sets the same key. */
+    private readonly sampling: SamplingOptions = {},
   ) {}
 
   private body(messages: Message[], tools: ToolDefinition[] = [], stream: boolean): string {
     return JSON.stringify({
+      ...this.samplingBody(),
       ...this.extraBody,
       model: this.modelName,
       messages: sanitizeMessages(messages),
@@ -92,6 +96,15 @@ export class OpenAICompatibleModel implements Model {
         : {}),
       ...(stream ? { stream: true } : {}),
     });
+  }
+
+  private samplingBody(): Record<string, unknown> {
+    const body: Record<string, unknown> = {};
+    if (this.sampling.maxTokens !== undefined) body.max_tokens = this.sampling.maxTokens;
+    if (this.sampling.temperature !== undefined) body.temperature = this.sampling.temperature;
+    if (this.sampling.topP !== undefined) body.top_p = this.sampling.topP;
+    if (this.sampling.repeatPenalty !== undefined) body.repeat_penalty = this.sampling.repeatPenalty;
+    return body;
   }
 
   private endpoint(): string {

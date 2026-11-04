@@ -16,10 +16,16 @@ function tool(name: string): Tool {
 
 test("read numbers the requested line range", async () => {
   const result = await tool("read").execute({ path: "package.json", limit: 3 });
-  const lines = result.split("\n");
+  const lines = result.split("\n").filter((line) => !line.startsWith("（"));
   assert.equal(lines.length, 3);
   assert.match(lines[0]!, /^1: \{/);
   assert.match(lines[1]!, /^2: +"name"/);
+});
+
+test("read warns that the line-number prefix is not file content", async () => {
+  const result = await tool("read").execute({ path: "package.json", limit: 2 });
+  assert.match(result, /行号/);
+  assert.match(result, /oldText/);
 });
 
 test("read refuses paths outside the workspace", async () => {

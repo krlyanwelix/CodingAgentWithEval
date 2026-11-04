@@ -112,6 +112,19 @@ On Windows the `bash` tool looks for Git Bash in this order: `GIT_BASH_PATH`, th
 
 Resuming a session first closes any turn the previous process left unfinished, so the history never ends on a user message that has no answer.
 
+## Sampling and prompt
+
+Every request carries explicit sampling defaults: a local `llama-server` otherwise generates up to the whole context window at `temperature 0.8`, which is how small models end up rambling and repeating themselves.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MODEL_MAX_TOKENS` | `1024` | Hard cap on one answer |
+| `MODEL_TEMPERATURE` | `0.3` | Lower = steadier tool calls |
+| `MODEL_TOP_P` | `0.9` | Nucleus sampling |
+| `MODEL_REPEAT_PENALTY` | `1.05` | llama.cpp only; omitted for the hosted API |
+
+`src/prompt.ts` holds the behaviour contract the model is given: list before guessing a path, read before editing, one tool call at a time, never repeat a failed call, and answer in at most five lines. Two guards back that contract up in `src/agent.ts`: an identical tool call that just ran is skipped instead of executed again, and two failures in a row append a change-approach hint to the tool result.
+
 ## Development
 
 ```sh

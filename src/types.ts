@@ -43,6 +43,17 @@ export interface ModelRequestOptions {
   idleTimeoutMs?: number;
 }
 
+/**
+ * Sampling parameters sent with every request. Small local models need an
+ * explicit cap and a low temperature or they ramble and repeat themselves.
+ */
+export interface SamplingOptions {
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  repeatPenalty?: number;
+}
+
 export interface Model {
   complete(messages: Message[], tools: ToolDefinition[], options?: ModelRequestOptions): Promise<Message>;
   stream?(messages: Message[], tools: ToolDefinition[], options?: ModelRequestOptions): AsyncGenerator<ModelStreamEvent>;

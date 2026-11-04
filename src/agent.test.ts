@@ -196,3 +196,50 @@ test("an empty answer produces a warning instead of ending silently", async () =
   assert.ok(warning && warning.type === "warning");
   assert.match(warning.message, /empty answer/);
 });
+
+test("the exact same tool call twice in a row is skipped, not executed", async () => {
+  let executed = 0;
+  const counter: Tool = {
+    definition: { name: "counter", description: "Counts calls.", parameters: { type: "object", properties: {} } },
+    async execute() {
+      executed += 1;
+      return `count:${executed}`;
+    },
+  };
+  const call = (id: string): Message => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name: "counter", arguments: "{}" } }],
+  });
+  const model = new ScriptedModel([call("c1"), call("c2"), { role: "assistant", content: "done" }]);
+  const agent = new Agent({ model, tools: [counter], systemPrompt: "sys" });
+
+  const events = await drain(agent.run("go"));
+
+  const results = events.filter((event) => event.type === "tool_end").map((event) => (event as { result: string }).result);
+  assert.equal(executed, 1);
+  assert.equal(results.length, 2);
+  assert.match(results[1]!, /Skipped/);
+});
+
+test("two failures in a row add a change-approach hint", async () => {
+  const broken: Tool = {
+    definition: { name: "broken", description: "Always throws.", parameters: { type: "object", properties: { n: { type: "integer" } } } },
+    async execute() {
+      throw new Error("nope");
+    },
+  };
+  const call = (id: string, n: number): Message => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name: "broken", arguments: `{"n":${n}}` } }],
+  });
+  const model = new ScriptedModel([call("c1", 1), call("c2", 2), { role: "assistant", content: "gave up" }]);
+  const agent = new Agent({ model, tools: [broken], systemPrompt: "sys" });
+
+  const events = await drain(agent.run("go"));
+  const results = events.filter((event) => event.type === "tool_end").map((event) => (event as { result: string }).result);
+  assert.match(results[0]!, /^Tool error: nope/);
+  assert.doesNotMatch(results[0]!, /Hint:/);
+  assert.match(results[1]!, /Hint: two tool calls failed/);
+});

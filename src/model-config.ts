@@ -1,5 +1,5 @@
 import { OpenAICompatibleModel } from "./model.js";
-import type { Model } from "./types.js";
+import type { Model, SamplingOptions } from "./types.js";
 
 export type ModelProvider = "local" | "remote";
 
@@ -16,6 +16,8 @@ export interface ModelSettings {
   enableThinking: boolean;
   /** Provider-specific request fields merged into every chat-completions body. */
   extraBody: Record<string, unknown>;
+  /** Sent with every request so a small model cannot ramble or run on. */
+  sampling: SamplingOptions;
 }
 
 interface ProviderDefaults {
@@ -46,6 +48,12 @@ function positiveInt(raw: string | undefined, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function positiveFloat(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 /**
  * Pick the model backend. `local` (the default) talks to a llama.cpp server on
  * this machine; `remote` keeps the original OpenAI-compatible API as a
@@ -67,6 +75,14 @@ export function readModelSettings(env: NodeJS.ProcessEnv = process.env): ModelSe
   }
   const enableThinking =
     provider === "local" ? (env.LOCAL_MODEL_ENABLE_THINKING ?? "false").trim().toLowerCase() === "true" : false;
+  // An explicit body field still wins: these are defaults, not policy.
+  const sampling: SamplingOptions = {
+    maxTokens: positiveInt(env.MODEL_MAX_TOKENS, 1024),
+    temperature: positiveFloat(env.MODEL_TEMPERATURE, 0.3),
+    topP: positiveFloat(env.MODEL_TOP_P, 0.9),
+    // `repeat_penalty` is a llama.cpp extension; the hosted API would reject it.
+    ...(provider === "local" ? { repeatPenalty: positiveFloat(env.MODEL_REPEAT_PENALTY, 1.05) } : {}),
+  };
   return {
     provider,
     baseUrl: baseUrl.replace(/\/+$/, ""),
@@ -79,6 +95,7 @@ export function readModelSettings(env: NodeJS.ProcessEnv = process.env): ModelSe
       provider === "local"
         ? { chat_template_kwargs: { enable_thinking: enableThinking } }
         : {},
+    sampling,
   };
 }
 
@@ -93,7 +110,13 @@ export function describeModel(settings: ModelSettings): string {
 export function createModel(env: NodeJS.ProcessEnv = process.env): { model: Model; settings: ModelSettings } {
   const settings = readModelSettings(env);
   return {
-    model: new OpenAICompatibleModel(settings.apiKey, settings.model, settings.baseUrl, settings.extraBody),
+    model: new OpenAICompatibleModel(
+      settings.apiKey,
+      settings.model,
+      settings.baseUrl,
+      settings.extraBody,
+      settings.sampling,
+    ),
     settings,
   };
 }

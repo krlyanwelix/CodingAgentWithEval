@@ -75,3 +75,28 @@ test("createModel builds a model without touching the network", () => {
     'local llama.cpp model "qwen3.5-9b" at http://127.0.0.1:8080/v1 (thinking off)',
   );
 });
+
+test("sampling defaults keep a small model short and predictable", () => {
+  const settings = readModelSettings({});
+  assert.deepEqual(settings.sampling, { maxTokens: 1024, temperature: 0.3, topP: 0.9, repeatPenalty: 1.05 });
+});
+
+test("sampling can be tuned from the environment", () => {
+  const settings = readModelSettings({
+    MODEL_MAX_TOKENS: "256",
+    MODEL_TEMPERATURE: "0.7",
+    MODEL_TOP_P: "0.5",
+    MODEL_REPEAT_PENALTY: "1.2",
+  });
+  assert.deepEqual(settings.sampling, { maxTokens: 256, temperature: 0.7, topP: 0.5, repeatPenalty: 1.2 });
+
+  const broken = readModelSettings({ MODEL_MAX_TOKENS: "zero", MODEL_TEMPERATURE: "-1" });
+  assert.equal(broken.sampling.maxTokens, 1024);
+  assert.equal(broken.sampling.temperature, 0.3);
+});
+
+test("the hosted API gets no llama.cpp-only sampling field", () => {
+  const settings = readModelSettings({ MODEL_PROVIDER: "remote", OPENAI_API_KEY: "sk-test" });
+  assert.equal(settings.sampling.repeatPenalty, undefined);
+  assert.equal(settings.sampling.maxTokens, 1024);
+});

@@ -50,11 +50,16 @@ export class Agent {
   private messages: Message[];
   /** Digest of turns dropped by compaction; appended to the system prompt. */
   private digest = "";
+  /** Name+args of the previous tool call, used to catch identical retries. */
+  private lastToolCall?: string;
+  private consecutiveToolFailures = 0;
 
   constructor(private readonly options: AgentOptions) {
     this.toolByName = new Map(options.tools.map((tool) => [tool.definition.name, tool]));
     this.toolDefinitions = options.tools.map((tool) => tool.definition);
-    this.maxTurns = options.maxTurns ?? 12;
+    // A local 9B model needs a few extra turns to explore; the repeat guard
+    // below stops runaway loops instead of a low turn cap.
+    this.maxTurns = options.maxTurns ?? 20;
     this.messages = [{ role: "system", content: options.systemPrompt }, ...(options.history ?? [])];
     this.contextOptions = { ...DEFAULT_CONTEXT_OPTIONS, ...(options.context ?? {}) };
   }
@@ -71,6 +76,8 @@ export class Agent {
       role: "user",
       content: runOptions.context ? `${input}\n\n${runOptions.context}` : input,
     });
+    this.lastToolCall = undefined;
+    this.consecutiveToolFailures = 0;
 
     let partial = "";
     try {
@@ -201,6 +208,16 @@ export class Agent {
       if (!approved) return "Tool execution cancelled by the user.";
     }
 
+    // The most common small-model loop is repeating a call that already failed.
+    const signature = `${call.function.name}:${call.function.arguments}`;
+    if (signature === this.lastToolCall) {
+      return (
+        `Skipped: this exact call (${call.function.name} ${call.function.arguments}) ` +
+        "already ran in the previous step. Use its result, try different arguments, or answer the user."
+      );
+    }
+    this.lastToolCall = signature;
+
     let args: unknown;
     try {
       args = JSON.parse(call.function.arguments || "{}");
@@ -208,14 +225,27 @@ export class Agent {
       return `Tool error: arguments are not valid JSON: ${call.function.arguments.slice(0, 200)}`;
     }
 
+    let result: string;
     try {
       const output = await tool.execute(args, { signal });
-      return this.truncateToolResult(output, call.function.name);
+      result = this.truncateToolResult(output, call.function.name);
     } catch (cause) {
       if (signal?.aborted) throw cause;
       const detail = cause instanceof Error ? cause.message : String(cause);
-      return this.truncateToolResult(`Tool error: ${detail}`, call.function.name);
+      result = this.truncateToolResult(`Tool error: ${detail}`, call.function.name);
     }
+
+    if (result.startsWith("Tool error")) {
+      this.consecutiveToolFailures += 1;
+      if (this.consecutiveToolFailures >= 2) {
+        result +=
+          "\n\nHint: two tool calls failed in a row. Re-read the error, check the path or content, " +
+          "and change approach instead of retrying.";
+      }
+    } else {
+      this.consecutiveToolFailures = 0;
+    }
+    return result;
   }
 
   /** Keep a tool result within a sane size before it enters the history. */
