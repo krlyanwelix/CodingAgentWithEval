@@ -46,10 +46,13 @@ export class OpenAICompatibleModel implements Model {
     private readonly apiKey: string,
     private readonly modelName: string,
     private readonly baseUrl = "https://api.openai.com/v1",
+    /** Provider-specific fields, e.g. llama.cpp's chat_template_kwargs. */
+    private readonly extraBody: Record<string, unknown> = {},
   ) {}
 
-  private body(messages: Message[], tools: ToolDefinition[], stream: boolean): string {
+  private body(messages: Message[], tools: ToolDefinition[] = [], stream: boolean): string {
     return JSON.stringify({
+      ...this.extraBody,
       model: this.modelName,
       messages: sanitizeMessages(messages),
       ...(tools.length > 0
@@ -68,7 +71,7 @@ export class OpenAICompatibleModel implements Model {
 
   async complete(
     messages: Message[],
-    tools: ToolDefinition[],
+    tools: ToolDefinition[] = [],
     options: ModelRequestOptions = {},
   ): Promise<Message> {
     const timeout = options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined;
@@ -99,7 +102,7 @@ export class OpenAICompatibleModel implements Model {
 
   async *stream(
     messages: Message[],
-    tools: ToolDefinition[],
+    tools: ToolDefinition[] = [],
     options: ModelRequestOptions = {},
   ): AsyncGenerator<ModelStreamEvent> {
     const controller = new AbortController();

@@ -131,3 +131,35 @@ test("idle timeout aborts a stream that stops producing data", async () => {
     await closeServer(server);
   }
 });
+
+test("extra body fields are sent and reasoning deltas stay out of the answer", async () => {
+  let received: Record<string, unknown> = {};
+  const { server, baseUrl } = await startServer((request, response) => {
+    let raw = "";
+    request.on("data", (chunk) => {
+      raw += chunk;
+    });
+    request.on("end", () => {
+      received = JSON.parse(raw) as Record<string, unknown>;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(sse({ choices: [{ delta: { reasoning_content: "let me think" } }] }));
+      response.write(sse({ choices: [{ delta: { content: "ok" } }] }));
+      response.end("data: [DONE]\n\n");
+    });
+  });
+
+  try {
+    const model = new OpenAICompatibleModel("k", "m", baseUrl, {
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    let text = "";
+    for await (const event of model.stream([{ role: "user", content: "hi" }])) {
+      if (event.type === "text_delta") text += event.text;
+    }
+    assert.deepEqual(received.chat_template_kwargs, { enable_thinking: false });
+    assert.equal(received.model, "m");
+    assert.equal(text, "ok");
+  } finally {
+    await closeServer(server);
+  }
+});

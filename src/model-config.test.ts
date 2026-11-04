@@ -1,0 +1,77 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createModel, describeModel, readModelSettings } from "./model-config.js";
+
+test("defaults to the local llama.cpp provider", () => {
+  const settings = readModelSettings({});
+  assert.equal(settings.provider, "local");
+  assert.equal(settings.baseUrl, "http://127.0.0.1:8080/v1");
+  assert.equal(settings.model, "qwen3.5-9b");
+  assert.equal(settings.apiKey, "local");
+  assert.equal(settings.timeoutMs, 900_000);
+  assert.equal(settings.streamIdleTimeoutMs, 300_000);
+});
+
+test("local provider reads LOCAL_* overrides and strips a trailing slash", () => {
+  const settings = readModelSettings({
+    LOCAL_MODEL_BASE_URL: "http://192.168.1.20:8081/v1/",
+    LOCAL_MODEL: "qwen-local",
+    LOCAL_MODEL_API_KEY: "x",
+    MODEL_TIMEOUT_MS: "5000",
+    STREAM_IDLE_TIMEOUT_MS: "1000",
+  });
+  assert.equal(settings.baseUrl, "http://192.168.1.20:8081/v1");
+  assert.equal(settings.model, "qwen-local");
+  assert.equal(settings.apiKey, "x");
+  assert.equal(settings.timeoutMs, 5000);
+  assert.equal(settings.streamIdleTimeoutMs, 1000);
+});
+
+test("remote provider keeps the legacy OPENAI_* settings working", () => {
+  const settings = readModelSettings({
+    MODEL_PROVIDER: "remote",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    MODEL: "deepseek-chat",
+  });
+  assert.equal(settings.provider, "remote");
+  assert.equal(settings.baseUrl, "https://api.deepseek.com/v1");
+  assert.equal(settings.model, "deepseek-chat");
+  assert.equal(settings.apiKey, "sk-test");
+  assert.equal(settings.timeoutMs, 180_000);
+});
+
+test("remote provider without a key fails with a helpful message", () => {
+  assert.throws(
+    () => readModelSettings({ MODEL_PROVIDER: "remote" }),
+    /Missing OPENAI_API_KEY/,
+  );
+});
+
+test("an unknown provider is rejected instead of silently falling back", () => {
+  assert.throws(() => readModelSettings({ MODEL_PROVIDER: "ollama" }), /Unsupported MODEL_PROVIDER/);
+});
+
+test("local thinking is off by default and can be enabled", () => {
+  const off = readModelSettings({});
+  assert.equal(off.enableThinking, false);
+  assert.deepEqual(off.extraBody, { chat_template_kwargs: { enable_thinking: false } });
+  const on = readModelSettings({ LOCAL_MODEL_ENABLE_THINKING: "true" });
+  assert.equal(on.enableThinking, true);
+  assert.deepEqual(on.extraBody, { chat_template_kwargs: { enable_thinking: true } });
+});
+
+test("remote provider sends no chat-template extras", () => {
+  const settings = readModelSettings({ MODEL_PROVIDER: "remote", OPENAI_API_KEY: "sk-test" });
+  assert.deepEqual(settings.extraBody, {});
+  assert.equal(settings.enableThinking, false);
+});
+
+test("createModel builds a model without touching the network", () => {
+  const { model, settings } = createModel({});
+  assert.equal(typeof model.complete, "function");
+  assert.equal(
+    describeModel(settings),
+    'local llama.cpp model "qwen3.5-9b" at http://127.0.0.1:8080/v1 (thinking off)',
+  );
+});

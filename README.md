@@ -16,13 +16,25 @@ copy .env.example .env
 npm run dev
 ```
 
-The chat model uses an OpenAI-compatible endpoint:
+The agent talks to a local llama.cpp server by default:
+
+```sh
+llama-server -m D:\models\Qwen3.5-9B-Q4_K_M.gguf -c 16384 -ngl 99 --jinja \
+  --host 127.0.0.1 --port 8080
+```
 
 ```env
-OPENAI_API_KEY=...
-OPENAI_BASE_URL=https://api.deepseek.com/v1
-MODEL=deepseek-chat
+MODEL_PROVIDER=local
+LOCAL_MODEL_BASE_URL=http://127.0.0.1:8080/v1
+LOCAL_MODEL=qwen3.5-9b
+# keep the prompt budget below llama-server's -c value
+CONTEXT_MAX_INPUT_TOKENS=12000
+# reasoning this 9B model away costs 30-100s per turn; off is the default
+LOCAL_MODEL_ENABLE_THINKING=false
 ```
+
+`MODEL_PROVIDER=remote` switches back to a hosted OpenAI-compatible API using
+the legacy `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `MODEL` settings.
 
 ## Tools and Skills
 
