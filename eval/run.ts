@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Agent } from "../src/agent.js";
 import { setWorkspaceRoot, tools } from "../src/tools.js";
 import { createModel, describeModel } from "../src/model-config.js";
@@ -20,12 +20,22 @@ export interface TaskResult {
   messages: Message[];
 }
 
+export interface TaskAggregate {
+  id: string;
+  attempts: number;
+  passes: number;
+  /** Fraction of attempts that passed; the reward to mine from trajectories. */
+  reward: number;
+  pass: boolean;
+}
+
 export interface RunSummary {
   runId: string;
   model: string;
   provider: string;
   skill: string | null;
   results: TaskResult[];
+  aggregates: TaskAggregate[];
   passCount: number;
   total: number;
   elapsedMs: number;
@@ -155,22 +165,51 @@ export async function runEval(options: RunOptions): Promise<RunSummary> {
     }
   }
 
+  const byTask = new Map<string, TaskResult[]>();
+  for (const result of results) {
+    const list = byTask.get(result.id) ?? [];
+    list.push(result);
+    byTask.set(result.id, list);
+  }
+  const aggregates: TaskAggregate[] = [...byTask.entries()].map(([id, list]) => {
+    const passes = list.filter((result) => result.pass).length;
+    return {
+      id,
+      attempts: list.length,
+      passes,
+      reward: passes / list.length,
+      pass: passes > list.length / 2,
+    };
+  });
+
   const summary: RunSummary = {
     runId,
     model: settings.model,
     provider: settings.provider,
     skill: options.skillPath ?? null,
     results,
-    passCount: results.filter((result) => result.pass).length,
-    total: results.length,
+    aggregates,
+    passCount: aggregates.filter((aggregate) => aggregate.pass).length,
+    total: aggregates.length,
     elapsedMs: Date.now() - started,
   };
 
+  const summaryPath = jsonlPath.replace(/\.jsonl$/, `-${runId}.json`);
+  mkdirSync(dirname(summaryPath), { recursive: true });
+  writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+
   if (!options.quiet) {
+    console.log("");
+    for (const aggregate of aggregates) {
+      console.log(
+        `${aggregate.pass ? "PASS" : "FAIL"} ${aggregate.id}  ${aggregate.passes}/${aggregate.attempts}  reward=${aggregate.reward.toFixed(2)}`,
+      );
+    }
     console.log(
-      `\n${describeModel(settings)} | skill=${options.skillPath ?? "-"} | ${summary.passCount}/${summary.total} passed | ${(summary.elapsedMs / 1000).toFixed(1)}s`,
+      `${describeModel(settings)} | skill=${options.skillPath ?? "-"} | ${summary.passCount}/${summary.total} tasks passed (majority) | ${(summary.elapsedMs / 1000).toFixed(1)}s`,
     );
     console.log(`trajectories appended to ${jsonlPath}`);
+    console.log(`summary written to ${summaryPath}`);
   }
   return summary;
 }
