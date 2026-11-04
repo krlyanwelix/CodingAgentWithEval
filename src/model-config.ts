@@ -107,6 +107,50 @@ export function describeModel(settings: ModelSettings): string {
   return `local llama.cpp model "${settings.model}" at ${settings.baseUrl} (${thinking})`;
 }
 
+/** What `llama-server` reports about itself; everything is optional. */
+export interface ServerInfo {
+  /** Context window actually loaded (`-c`), independent of what the client assumes. */
+  contextLimit?: number;
+  /** Model alias or file name the server loaded. */
+  modelName?: string;
+}
+
+/** `llama-server` serves `/props` at the host root, not under `/v1`. */
+export function getServerEndpoint(baseUrl: string): string {
+  return baseUrl.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
+}
+
+/**
+ * Ask `llama-server` for its real context size. A small local model cannot take
+ * the 24k the client assumes by default, and guessing costs a failed request.
+ */
+export async function readServerInfo(baseUrl: string, timeoutMs = 1500): Promise<ServerInfo> {
+  const endpoint = getServerEndpoint(baseUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${endpoint}/props`, { signal: controller.signal });
+    if (!response.ok) return {};
+    const data = (await response.json()) as {
+      model_path?: string;
+      model_alias?: string;
+      default_generation_settings?: { n_ctx?: number };
+    };
+    const context = data.default_generation_settings?.n_ctx;
+    // model_alias may be the full file path llama-server was launched with.
+    const rawName = (data.model_alias || data.model_path)?.split(/[\\/]/).pop();
+    return {
+      contextLimit: typeof context === "number" && context > 0 ? context : undefined,
+      modelName: rawName?.replace(/\.gguf$/i, ""),
+    };
+  } catch {
+    // A server that cannot describe itself is not a reason to fail the run.
+    return {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createModel(env: NodeJS.ProcessEnv = process.env): { model: Model; settings: ModelSettings } {
   const settings = readModelSettings(env);
   return {

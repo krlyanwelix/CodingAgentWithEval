@@ -112,6 +112,18 @@ On Windows the `bash` tool looks for Git Bash in this order: `GIT_BASH_PATH`, th
 
 Resuming a session first closes any turn the previous process left unfinished, so the history never ends on a user message that has no answer.
 
+The CLI and the web server ask `llama-server` for its own `n_ctx` at startup (`GET /props`) and cap `CONTEXT_MAX_INPUT_TOKENS` to fit inside it, leaving 3072 tokens for the reply and the server's prompt formatting. Guessing the window wrong costs one failed request per conversation, so the client never assumes more than the server reports.
+
+## Loop guards
+
+A small model loops in three recognisable ways, and the agent stops each one instead of burning turns:
+
+- **Parallel calls.** Tool calls from one assistant message run concurrently (after their confirmation prompts, asked one at a time). Results still land in the history in call order, so the transcript stays deterministic.
+- **Identical retries.** A call whose name and arguments equal the previous call is not executed; its result says `Skipped`, and two skips in a row end the run.
+- **Failure streaks.** Tool errors count up, and every error carries a `Corrective:` line telling the model what to change. Three failures in a row end the run with a `[harness]` message instead of a fourth attempt.
+
+The same rules back the prompt contract in `src/prompt.ts`: read before editing, never guess a path, one step at a time.
+
 ## Sampling and prompt
 
 Every request carries explicit sampling defaults: a local `llama-server` otherwise generates up to the whole context window at `temperature 0.8`, which is how small models end up rambling and repeating themselves.
@@ -133,7 +145,7 @@ npm start
 npm test
 ```
 
-The test suite uses Node's built-in test runner (through `tsx`) and covers the context budget and compaction, the session tree (resume, fork, delete), the agent loop against a scripted model, SSE parsing (malformed lines, cancellation, idle timeout), and the file tools.
+The test suite uses Node's built-in test runner (through `tsx`) and covers the context budget and compaction, the session tree (resume, fork, delete), the agent loop against a scripted model (parallel calls, retries, loop guards), SSE parsing (malformed lines, cancellation, idle timeout, retry), the server-info probe, and the file tools.
 
 ## Web UI
 

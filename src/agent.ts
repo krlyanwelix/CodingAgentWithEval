@@ -32,6 +32,15 @@ export interface RunOptions {
   signal?: AbortSignal;
 }
 
+/** One tool call after the cheap checks, waiting to be confirmed and executed. */
+interface PreparedCall {
+  call: ToolCall;
+  kind: "run" | "result";
+  value?: string;
+  tool?: Tool;
+  args?: unknown;
+}
+
 const DIGEST_HEADER = "[已压缩的早期对话摘要]";
 
 /**
@@ -52,7 +61,10 @@ export class Agent {
   private digest = "";
   /** Name+args of the previous tool call, used to catch identical retries. */
   private lastToolCall?: string;
-  private consecutiveToolFailures = 0;
+  /** Consecutive failed tool calls; three in a row stop the run instead of looping. */
+  private toolFailureStreak = 0;
+  /** Consecutive calls skipped as duplicates; three in a row stop the run. */
+  private skippedCallStreak = 0;
 
   constructor(private readonly options: AgentOptions) {
     this.toolByName = new Map(options.tools.map((tool) => [tool.definition.name, tool]));
@@ -77,7 +89,8 @@ export class Agent {
       content: runOptions.context ? `${input}\n\n${runOptions.context}` : input,
     });
     this.lastToolCall = undefined;
-    this.consecutiveToolFailures = 0;
+    this.toolFailureStreak = 0;
+    this.skippedCallStreak = 0;
 
     let partial = "";
     try {
@@ -131,13 +144,30 @@ export class Agent {
           return;
         }
 
+        // Announce every call first, run the approved ones at the same time, then
+        // report results in call order so the history stays deterministic.
         for (const toolCall of calls) {
           signal?.throwIfAborted();
           yield { type: "tool_start", toolCall };
-          const result = await this.executeTool(toolCall, signal);
-          signal?.throwIfAborted();
+        }
+        const results = await this.runToolCalls(calls, signal);
+        signal?.throwIfAborted();
+        for (let index = 0; index < calls.length; index += 1) {
+          const toolCall = calls[index]!;
+          const result = results[index]!;
           this.messages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
           yield { type: "tool_end", toolCall, result };
+        }
+
+        const stopReason = this.stopReason();
+        if (stopReason) {
+          // Stop the loop honestly instead of burning turns on a model that is stuck.
+          yield { type: "warning", message: stopReason };
+          const stopped: Message = { role: "assistant", content: `[harness] ${stopReason}` };
+          this.messages.push(stopped);
+          yield { type: "message_end", message: stopped };
+          yield { type: "agent_end", message: stopped };
+          return;
         }
       }
       throw new Error(`Agent reached the ${this.maxTurns}-turn limit`);
@@ -200,21 +230,59 @@ export class Agent {
     return [{ role: "system", content }, ...rest];
   }
 
-  private async executeTool(call: ToolCall, signal?: AbortSignal): Promise<string> {
+  private async runToolCalls(calls: ToolCall[], signal?: AbortSignal): Promise<string[]> {
+    const prepared = calls.map((call) => this.prepareCall(call));
+
+    // Confirmation prompts share one terminal, so ask them one at a time.
+    for (const item of prepared) {
+      if (item.kind !== "run" || !item.tool?.requiresConfirmation) continue;
+      const approved = this.options.confirmToolCall ? await this.options.confirmToolCall(item.call) : false;
+      if (!approved) {
+        item.kind = "result";
+        item.value =
+          "Tool execution cancelled by the user. Corrective: ask before acting, or choose an action the user approves.";
+      }
+    }
+
+    const outcomes = await Promise.all(
+      prepared.map(async (item) => {
+        if (item.kind !== "run" || !item.tool) return item.value ?? "";
+        try {
+          const output = await item.tool.execute(item.args, { signal });
+          return this.truncateToolResult(output, item.call.function.name);
+        } catch (cause) {
+          if (signal?.aborted) throw cause;
+          const detail = cause instanceof Error ? cause.message : String(cause);
+          return this.truncateToolResult(`Tool error: ${detail}`, item.call.function.name);
+        }
+      }),
+    );
+
+    // Account in call order so hints and streaks do not depend on completion order.
+    return outcomes.map((result) => this.accountToolResult(result));
+  }
+
+  /** Decide what a tool call does without touching the filesystem. */
+  private prepareCall(call: ToolCall): PreparedCall {
     const tool = this.toolByName.get(call.function.name);
-    if (!tool) return `Tool not found: ${call.function.name}`;
-    if (tool.requiresConfirmation) {
-      const approved = this.options.confirmToolCall ? await this.options.confirmToolCall(call) : false;
-      if (!approved) return "Tool execution cancelled by the user.";
+    if (!tool) {
+      return {
+        call,
+        kind: "result",
+        value: `Tool not found: ${call.function.name}. Corrective: only call tools listed in the system prompt.`,
+      };
     }
 
     // The most common small-model loop is repeating a call that already failed.
     const signature = `${call.function.name}:${call.function.arguments}`;
     if (signature === this.lastToolCall) {
-      return (
-        `Skipped: this exact call (${call.function.name} ${call.function.arguments}) ` +
-        "already ran in the previous step. Use its result, try different arguments, or answer the user."
-      );
+      return {
+        call,
+        kind: "result",
+        value:
+          `Skipped: this exact call (${call.function.name} ${call.function.arguments}) ` +
+          "already ran in the previous step. Corrective: use its result, change the arguments, or answer the user.",
+      };
     }
     this.lastToolCall = signature;
 
@@ -222,30 +290,51 @@ export class Agent {
     try {
       args = JSON.parse(call.function.arguments || "{}");
     } catch {
-      return `Tool error: arguments are not valid JSON: ${call.function.arguments.slice(0, 200)}`;
+      return {
+        call,
+        kind: "result",
+        value:
+          `Tool error: arguments are not valid JSON: ${call.function.arguments.slice(0, 200)}. ` +
+          'Corrective: send one JSON object, e.g. {"path":"README.md"}.',
+      };
+    }
+    return { call, kind: "run", tool, args };
+  }
+
+  /** Track streaks and add a corrective hint once failures repeat. */
+  private accountToolResult(result: string): string {
+    if (result.startsWith("Skipped")) {
+      this.skippedCallStreak += 1;
+      this.toolFailureStreak = 0;
+      return result;
+    }
+    this.skippedCallStreak = 0;
+
+    if (!result.startsWith("Tool error")) {
+      this.toolFailureStreak = 0;
+      return result;
     }
 
-    let result: string;
-    try {
-      const output = await tool.execute(args, { signal });
-      result = this.truncateToolResult(output, call.function.name);
-    } catch (cause) {
-      if (signal?.aborted) throw cause;
-      const detail = cause instanceof Error ? cause.message : String(cause);
-      result = this.truncateToolResult(`Tool error: ${detail}`, call.function.name);
+    this.toolFailureStreak += 1;
+    const hints: string[] = [];
+    if (/outside the current working directory|ENOENT|no such file/i.test(result)) {
+      hints.push("paths are relative to the workspace root; list the directory before reading a guessed name");
     }
+    if (this.toolFailureStreak >= 2) {
+      hints.push("two tool calls failed in a row: re-read the error and change approach instead of retrying");
+    }
+    return hints.length > 0 ? `${result}\n\nCorrective: ${hints.join("; ")}.` : result;
+  }
 
-    if (result.startsWith("Tool error")) {
-      this.consecutiveToolFailures += 1;
-      if (this.consecutiveToolFailures >= 2) {
-        result +=
-          "\n\nHint: two tool calls failed in a row. Re-read the error, check the path or content, " +
-          "and change approach instead of retrying.";
-      }
-    } else {
-      this.consecutiveToolFailures = 0;
+  /** Why the loop is about to give up, or undefined while it is still making progress. */
+  private stopReason(): string | undefined {
+    if (this.toolFailureStreak >= 3) {
+      return "Three tool calls failed in a row, so this run was stopped instead of looping.";
     }
-    return result;
+    if (this.skippedCallStreak >= 2) {
+      return "The model repeated the same tool call three times, so this run was stopped instead of looping.";
+    }
+    return undefined;
   }
 
   /** Keep a tool result within a sane size before it enters the history. */

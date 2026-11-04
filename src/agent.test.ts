@@ -240,6 +240,102 @@ test("two failures in a row add a change-approach hint", async () => {
   const events = await drain(agent.run("go"));
   const results = events.filter((event) => event.type === "tool_end").map((event) => (event as { result: string }).result);
   assert.match(results[0]!, /^Tool error: nope/);
-  assert.doesNotMatch(results[0]!, /Hint:/);
-  assert.match(results[1]!, /Hint: two tool calls failed/);
+  assert.doesNotMatch(results[0]!, /Corrective:/);
+  assert.match(results[1]!, /Corrective: .*two tool calls failed/);
+});
+
+test("tool calls in one step run concurrently but report in call order", async () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const slow: Tool = {
+    definition: { name: "slow", description: "Waits.", parameters: { type: "object", properties: {} } },
+    async execute() {
+      await sleep(120);
+      return "slow done";
+    },
+  };
+  const fast: Tool = {
+    definition: { name: "fast", description: "Answers at once.", parameters: { type: "object", properties: {} } },
+    async execute() {
+      await sleep(10);
+      return "fast done";
+    },
+  };
+  const model = new ScriptedModel([
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "slow", arguments: "{}" } },
+        { id: "c2", type: "function", function: { name: "fast", arguments: "{}" } },
+      ],
+    },
+    { role: "assistant", content: "both done" },
+  ]);
+  const agent = new Agent({ model, tools: [slow, fast], systemPrompt: "sys" });
+
+  const started = Date.now();
+  const events = await drain(agent.run("go"));
+  const elapsed = Date.now() - started;
+
+  const ends = events.filter((event) => event.type === "tool_end").map((event) => (event as { result: string }).result);
+  assert.deepEqual(ends, ["slow done", "fast done"]);
+  assert.ok(elapsed < 220, `calls should overlap, took ${elapsed}ms`);
+
+  // Both results land in the next prompt, in call order.
+  const prompt = model.calls[1]!;
+  assert.deepEqual(
+    prompt.slice(-2).map((message) => message.content),
+    ["slow done", "fast done"],
+  );
+});
+
+test("three failed tool calls stop the run instead of looping", async () => {
+  const broken: Tool = {
+    definition: { name: "broken", description: "Always throws.", parameters: { type: "object", properties: { n: { type: "integer" } } } },
+    async execute() {
+      throw new Error("nope");
+    },
+  };
+  const call = (id: string, n: number): Message => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name: "broken", arguments: `{"n":${n}}` } }],
+  });
+  const model = new ScriptedModel([call("c1", 1), call("c2", 2), call("c3", 3), call("c4", 4)]);
+  const agent = new Agent({ model, tools: [broken], systemPrompt: "sys" });
+
+  const events = await drain(agent.run("go"));
+  const results = events.filter((event) => event.type === "tool_end");
+  assert.equal(results.length, 3);
+  const warning = events.find((event) => event.type === "warning");
+  assert.ok(warning && warning.type === "warning");
+  assert.match(warning.message, /three tool calls failed/i);
+  const end = events.find((event) => event.type === "agent_end");
+  assert.ok(end && end.type === "agent_end");
+  assert.match(String(end.message.content), /^\[harness\]/);
+  assert.equal(model.calls.length, 3);
+});
+
+test("repeating the same tool call stops the run after the second skip", async () => {
+  const tool: Tool = {
+    definition: { name: "counter", description: "Counts.", parameters: { type: "object", properties: {} } },
+    async execute() {
+      return "counted";
+    },
+  };
+  const call = (id: string): Message => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name: "counter", arguments: "{}" } }],
+  });
+  const model = new ScriptedModel([call("c1"), call("c2"), call("c3"), call("c4")]);
+  const agent = new Agent({ model, tools: [tool], systemPrompt: "sys" });
+
+  const events = await drain(agent.run("go"));
+  const warning = events.find((event) => event.type === "warning");
+  assert.ok(warning && warning.type === "warning");
+  assert.match(warning.message, /repeated the same tool call/i);
+  const results = events.filter((event) => event.type === "tool_end").map((event) => (event as { result: string }).result);
+  assert.equal(results.length, 3);
+  assert.match(results[1]!, /Skipped/);
 });

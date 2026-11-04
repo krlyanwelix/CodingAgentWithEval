@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { createModel, describeModel, readModelSettings } from "./model-config.js";
+import { createModel, describeModel, getServerEndpoint, readModelSettings, readServerInfo } from "./model-config.js";
 
 test("defaults to the local llama.cpp provider", () => {
   const settings = readModelSettings({});
@@ -99,4 +101,41 @@ test("the hosted API gets no llama.cpp-only sampling field", () => {
   const settings = readModelSettings({ MODEL_PROVIDER: "remote", OPENAI_API_KEY: "sk-test" });
   assert.equal(settings.sampling.repeatPenalty, undefined);
   assert.equal(settings.sampling.maxTokens, 1024);
+});
+
+test("the server endpoint drops the /v1 suffix", () => {
+  assert.equal(getServerEndpoint("http://127.0.0.1:8080/v1"), "http://127.0.0.1:8080");
+  assert.equal(getServerEndpoint("http://127.0.0.1:8080/v1/"), "http://127.0.0.1:8080");
+  assert.equal(getServerEndpoint("https://api.deepseek.com"), "https://api.deepseek.com");
+});
+
+test("readServerInfo reports the context window llama-server was loaded with", async () => {
+  const server = createServer((request, response) => {
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          model_path: "D:\\\\models\\\\qwen3.5-9b-Q4_K_M.gguf",
+          default_generation_settings: { n_ctx: 16384 },
+        }),
+      );
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const info = await readServerInfo(`http://127.0.0.1:${port}/v1`);
+    assert.equal(info.contextLimit, 16384);
+    assert.equal(info.modelName, "qwen3.5-9b-Q4_K_M");
+  } finally {
+    server.close();
+  }
+});
+
+test("readServerInfo tolerates a server that does not answer", async () => {
+  const info = await readServerInfo("http://127.0.0.1:9/v1", 300);
+  assert.deepEqual(info, {});
 });
