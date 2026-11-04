@@ -19,15 +19,29 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+/** Per-call context handed to a tool so long-running work can be cancelled. */
+export interface ToolContext {
+  signal?: AbortSignal;
+}
+
 export interface Tool {
   definition: ToolDefinition;
   requiresConfirmation?: boolean;
-  execute(args: unknown): Promise<string>;
+  execute(args: unknown, context?: ToolContext): Promise<string>;
+}
+
+export interface ModelRequestOptions {
+  /** Cancels the in-flight request. */
+  signal?: AbortSignal;
+  /** Hard timeout for one non-streaming call. */
+  timeoutMs?: number;
+  /** Abort a stream when no bytes arrive for this long. */
+  idleTimeoutMs?: number;
 }
 
 export interface Model {
-  complete(messages: Message[], tools: ToolDefinition[]): Promise<Message>;
-  stream?(messages: Message[], tools: ToolDefinition[]): AsyncGenerator<ModelStreamEvent>;
+  complete(messages: Message[], tools: ToolDefinition[], options?: ModelRequestOptions): Promise<Message>;
+  stream?(messages: Message[], tools: ToolDefinition[], options?: ModelRequestOptions): AsyncGenerator<ModelStreamEvent>;
 }
 
 export type ModelStreamEvent =
@@ -41,4 +55,6 @@ export type AgentEvent =
   | { type: "tool_start"; toolCall: ToolCall }
   | { type: "tool_end"; toolCall: ToolCall; result: string }
   | { type: "agent_end"; message: Message }
+  /** The run stopped because the caller aborted; `partial` is the text streamed so far. */
+  | { type: "aborted"; partial: string }
   | { type: "error"; error: Error };

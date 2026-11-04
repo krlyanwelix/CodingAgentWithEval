@@ -15,6 +15,25 @@ if (!apiKey) {
 }
 
 const modelName = process.env.MODEL ?? "gpt-4o-mini";
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/** Token budget settings; src/context.ts documents what each limit means. */
+const contextOptions = {
+  maxInputTokens: envInt("CONTEXT_MAX_INPUT_TOKENS", 24000),
+  reserveTokens: envInt("CONTEXT_RESERVE_TOKENS", 2048),
+  keepRecentTurns: envInt("CONTEXT_KEEP_RECENT_TURNS", 3),
+  toolResultMaxChars: envInt("CONTEXT_TOOL_RESULT_MAX_CHARS", 4000),
+  toolResultHeadChars: envInt("CONTEXT_TOOL_RESULT_HEAD_CHARS", 1500),
+  toolResultTailChars: envInt("CONTEXT_TOOL_RESULT_TAIL_CHARS", 1000),
+  spillDir: process.env.CONTEXT_SPILL_DIR ?? "data/tool-output",
+};
+
 const externalTools = await loadExternalTools(process.env.AGENT_TOOLS_DIR ?? "tools");
 const skills = await discoverSkills(process.env.AGENT_SKILLS_DIR ?? "skills");
 const loadedTools = [...builtinTools, ...externalTools, ...(skills.length > 0 ? [createSkillLoaderTool(skills)] : [])];
@@ -32,6 +51,17 @@ const mem0 = new Mem0Client({
 const memoryAvailable = await mem0.start();
 if (!memoryAvailable) console.warn("Mem0 memory is unavailable; the agent will continue without long-term memory.");
 const terminal = createInterface({ input: stdin, output: stdout });
+
+/** Set while a turn is streaming; Ctrl+C then cancels it instead of exiting. */
+let activeController: AbortController | null = null;
+process.on("SIGINT", () => {
+  if (!activeController) {
+    console.log("\nBye.");
+    process.exit(0);
+  }
+  activeController.abort();
+  console.log("\n[cancelling] waiting for the current step to stop...");
+});
 
 const existingSessions = sessionStore.listSessions();
 let sessionId: string;
@@ -95,6 +125,9 @@ const agent = new Agent({
   ),
   tools: loadedTools,
   history,
+  context: contextOptions,
+  modelTimeoutMs: envInt("MODEL_TIMEOUT_MS", 180000),
+  streamIdleTimeoutMs: envInt("STREAM_IDLE_TIMEOUT_MS", 120000),
   systemPrompt: `You are a helpful assistant. 
   You are running on the model: ${modelName}.
   Use tools when they help answer the user. Be concise.
@@ -179,7 +212,8 @@ while (true) {
     currentNodeId = activeTurnId;
     let streamedText = false;
     const turnMessages: Array<{ role: string; content: string }> = [{ role: "user", content: input }];
-    for await (const event of agent.run(input, memoryContext)) {
+    activeController = new AbortController();
+    for await (const event of agent.run(input, { context: memoryContext, signal: activeController.signal })) {
       if (event.type === "text_delta") {
         stdout.write(event.text);
         streamedText = true;
@@ -192,11 +226,16 @@ while (true) {
         usedToolNames.push(event.toolCall.function.name);
         console.log(`[result] ${event.result}`);
       }
+      if (event.type === "aborted") {
+        if (event.partial) assistantContent = `${assistantContent ?? ""}${assistantContent ? "\n" : ""}${event.partial}`;
+        console.log("\n[cancelled] the partial answer was saved to this turn.\n");
+      }
       if (event.type === "agent_end") {
         if (streamedText) console.log("\n");
         else console.log(`\nagent> ${event.message.content ?? ""}\n`);
       }
     }
+    activeController = null;
     sessionStore.completeTurn(activeTurnId, assistantContent, usedToolNames);
     activeTurnId = null;
     if (assistantContent) turnMessages.push({ role: "assistant", content: assistantContent });
@@ -205,6 +244,7 @@ while (true) {
       catch (error) { console.warn(`Memory extraction unavailable: ${error instanceof Error ? error.message : String(error)}`); }
     }
   } catch (error) {
+    activeController = null;
     const message = error instanceof Error ? error.message : String(error);
     if (activeTurnId) sessionStore.completeTurn(activeTurnId, assistantContent ?? `Error: ${message}`, usedToolNames);
     console.error(`\nagent error> ${message}\n`);

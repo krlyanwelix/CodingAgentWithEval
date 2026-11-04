@@ -77,12 +77,31 @@ The TypeScript agent calls the sidecar before and after each turn. It also suppo
 
 The sidecar reads the project `.env` itself. `MEM0_AUTOSTART=true` lets the TypeScript process start it automatically.
 
+## Context budget and cancellation
+
+Every prompt is fitted into a token budget (default 24000). When the history outgrows it, the oldest whole turns are dropped and replaced by a short digest that the agent keeps appending to the system prompt, so the model keeps the gist without re-sending everything. Any single tool result is capped before it enters the history; the full text of a long result is spooled to `data/tool-output/` so the model can read it back.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CONTEXT_MAX_INPUT_TOKENS` | `24000` | Estimated prompt ceiling |
+| `CONTEXT_RESERVE_TOKENS` | `2048` | Room left for the reply |
+| `CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns always kept verbatim |
+| `CONTEXT_TOOL_RESULT_MAX_CHARS` | `4000` | Longer tool results are truncated |
+| `CONTEXT_SPILL_DIR` | `data/tool-output` | Where full tool output is spooled |
+| `MODEL_TIMEOUT_MS` | `180000` | Hard timeout for a non-streaming call |
+| `STREAM_IDLE_TIMEOUT_MS` | `120000` | Abort a stream that stops producing bytes |
+
+Ctrl+C while the agent is working cancels the current run: the in-flight model request and the running tool are aborted, the partial answer is saved to the turn, and the CLI returns to the prompt. Press it again at the prompt to exit.
+
 ## Development
 
 ```sh
 npm run build
 npm start
+npm test
 ```
+
+The test suite uses Node's built-in test runner (through `tsx`) and covers the context budget and compaction, the session tree (resume, fork, delete), the agent loop against a scripted model, SSE parsing (malformed lines, cancellation, idle timeout), and the file tools.
 
 ## Web UI
 

@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { Tool } from "./types.js";
+import type { Tool, ToolContext } from "./types.js";
 
 const workspaceRoot = resolve(process.cwd());
 const execFileAsync = promisify(execFile);
@@ -99,7 +99,7 @@ export const tools: Tool[] = [
       },
     },
     requiresConfirmation: true,
-    async execute(args) {
+    async execute(args, context?: ToolContext) {
       const input = objectArgs(args);
       if (typeof input.command !== "string" || input.command.trim() === "") throw new Error("command must be a non-empty string");
       const bash = findBash();
@@ -113,9 +113,12 @@ export const tools: Tool[] = [
           timeout,
           maxBuffer: 1024 * 1024,
           windowsHide: true,
+          signal: context?.signal,
         });
         return [result.stdout, result.stderr ? `stderr:\n${result.stderr}` : "", `exit_code: 0`].filter(Boolean).join("\n").trim();
       } catch (cause) {
+        // Cancellation must propagate as a cancellation, not as a "command failed" string.
+        if (context?.signal?.aborted) throw cause;
         const error = cause as { stdout?: string; stderr?: string; code?: string | number; killed?: boolean; message?: string };
         return [
           error.stdout,
