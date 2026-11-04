@@ -5,7 +5,12 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Tool, ToolContext } from "./types.js";
 
-const workspaceRoot = resolve(process.cwd());
+let workspaceRoot = resolve(process.cwd());
+
+/** Points the built-in tools at another directory (used by the eval harness). */
+export function setWorkspaceRoot(directory: string): void {
+  workspaceRoot = resolve(directory);
+}
 const execFileAsync = promisify(execFile);
 
 export function findBash(): string | undefined {
