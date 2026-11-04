@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
-import { createModel, describeModel, readServerInfo } from "./model-config.js";
+import { createModel, describeModel } from "./model-config.js";
 import { tools as builtinTools } from "./tools.js";
 import { SessionStore } from "./session-store.js";
 import { createSkillLoaderTool, discoverSkills, loadExternalTools } from "./loader.js";
@@ -19,12 +19,6 @@ const { model, settings: modelSettings } = (() => {
 })();
 console.log(`Using ${describeModel(modelSettings)}\n`);
 
-/** llama-server reports the context it was loaded with; the client must not assume more. */
-const serverInfo = modelSettings.provider === "local" ? await readServerInfo(modelSettings.baseUrl) : {};
-if (serverInfo.contextLimit) {
-  console.log(`Server context: ${serverInfo.contextLimit} tokens\n`);
-}
-
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -36,9 +30,7 @@ function envInt(name: string, fallback: number): number {
 const requestedInputTokens = envInt("CONTEXT_MAX_INPUT_TOKENS", 24000);
 const contextOptions = {
   // Leave room for the reply and the server's own prompt formatting.
-  maxInputTokens: serverInfo.contextLimit
-    ? Math.min(requestedInputTokens, Math.max(2048, serverInfo.contextLimit - 3072))
-    : requestedInputTokens,
+  maxInputTokens: requestedInputTokens,
   reserveTokens: envInt("CONTEXT_RESERVE_TOKENS", 2048),
   keepRecentTurns: envInt("CONTEXT_KEEP_RECENT_TURNS", 3),
   toolResultMaxChars: envInt("CONTEXT_TOOL_RESULT_MAX_CHARS", 4000),

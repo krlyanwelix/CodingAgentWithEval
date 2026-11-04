@@ -76,7 +76,7 @@ export class OpenAICompatibleModel implements Model {
     private readonly apiKey: string,
     private readonly modelName: string,
     private readonly baseUrl = "https://api.openai.com/v1",
-    /** Provider-specific fields, e.g. llama.cpp's chat_template_kwargs. */
+    /** Provider-specific fields merged into every chat-completions body. */
     private readonly extraBody: Record<string, unknown> = {},
     /** Sampling defaults; extraBody still wins when it sets the same key. */
     private readonly sampling: SamplingOptions = {},
@@ -103,7 +103,6 @@ export class OpenAICompatibleModel implements Model {
     if (this.sampling.maxTokens !== undefined) body.max_tokens = this.sampling.maxTokens;
     if (this.sampling.temperature !== undefined) body.temperature = this.sampling.temperature;
     if (this.sampling.topP !== undefined) body.top_p = this.sampling.topP;
-    if (this.sampling.repeatPenalty !== undefined) body.repeat_penalty = this.sampling.repeatPenalty;
     return body;
   }
 

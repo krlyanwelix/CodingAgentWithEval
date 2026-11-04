@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { Agent } from "./agent.js";
-import { createModel, describeModel, readServerInfo } from "./model-config.js";
+import { createModel, describeModel } from "./model-config.js";
 import { tools as builtinTools } from "./tools.js";
 import { SessionStore } from "./session-store.js";
 import { createSkillLoaderTool, discoverSkills, loadExternalTools } from "./loader.js";
@@ -24,12 +24,10 @@ const { model, settings: modelSettings } = (() => {
 })();
 console.log(`Using ${describeModel(modelSettings)}`);
 
-/** The server's real context size bounds every request, whatever the client assumes. */
-const serverInfo = modelSettings.provider === "local" ? await readServerInfo(modelSettings.baseUrl) : {};
-const requestedTokens = Number.parseInt(process.env.CONTEXT_MAX_INPUT_TOKENS ?? "24000", 10);
-const contextLimit = serverInfo.contextLimit
-  ? Math.min(Number.isFinite(requestedTokens) ? requestedTokens : 24000, Math.max(2048, serverInfo.contextLimit - 3072))
-  : 24000;
+const contextLimit = (() => {
+  const value = Number.parseInt(process.env.CONTEXT_MAX_INPUT_TOKENS ?? "24000", 10);
+  return Number.isFinite(value) && value > 0 ? value : 24000;
+})();
 const externalTools = await loadExternalTools(process.env.AGENT_TOOLS_DIR ?? "tools");
 const skills = await discoverSkills(process.env.AGENT_SKILLS_DIR ?? "skills");
 const loadedTools = [...builtinTools, ...externalTools, ...(skills.length ? [createSkillLoaderTool(skills)] : [])];
@@ -152,9 +150,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     json(res, 200, {
       ok: true,
       model: modelSettings.model,
-      provider: modelSettings.provider,
-      serverModel: serverInfo.modelName ?? modelSettings.model,
-      contextLimit: serverInfo.contextLimit ?? null,
+      contextLimit,
       memoryAvailable,
     });
     return true;

@@ -51,7 +51,6 @@ export interface SamplingOptions {
   maxTokens?: number;
   temperature?: number;
   topP?: number;
-  repeatPenalty?: number;
 }
 
 export interface Model {

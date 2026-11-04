@@ -154,7 +154,7 @@ test("extra body fields are sent and reasoning deltas stay out of the answer", a
       "m",
       baseUrl,
       { chat_template_kwargs: { enable_thinking: false } },
-      { maxTokens: 512, temperature: 0.2, topP: 0.8, repeatPenalty: 1.05 },
+      { maxTokens: 512, temperature: 0.2, topP: 0.8 },
     );
     let text = "";
     for await (const event of model.stream([{ role: "user", content: "hi" }])) {
@@ -165,7 +165,6 @@ test("extra body fields are sent and reasoning deltas stay out of the answer", a
     assert.equal(received.max_tokens, 512);
     assert.equal(received.temperature, 0.2);
     assert.equal(received.top_p, 0.8);
-    assert.equal(received.repeat_penalty, 1.05);
     assert.equal(text, "ok");
   } finally {
     await closeServer(server);

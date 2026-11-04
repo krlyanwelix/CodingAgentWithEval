@@ -1,10 +1,7 @@
 import { OpenAICompatibleModel } from "./model.js";
 import type { Model, SamplingOptions } from "./types.js";
 
-export type ModelProvider = "local" | "remote";
-
 export interface ModelSettings {
-  provider: ModelProvider;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -12,32 +9,13 @@ export interface ModelSettings {
   timeoutMs: number;
   /** Abort a stream that stops producing bytes for this long. */
   streamIdleTimeoutMs: number;
-  /** Local reasoning models "think" before answering; off by default because it is slow. */
-  enableThinking: boolean;
-  /** Provider-specific request fields merged into every chat-completions body. */
-  extraBody: Record<string, unknown>;
   /** Sent with every request so a small model cannot ramble or run on. */
   sampling: SamplingOptions;
 }
 
-interface ProviderDefaults {
-  baseUrl: string;
-  model: string;
-  timeoutMs: number;
-  streamIdleTimeoutMs: number;
-}
-
-/** llama.cpp's `llama-server` exposes an OpenAI-compatible API on this port by default. */
-const LOCAL_DEFAULTS: ProviderDefaults = {
-  baseUrl: "http://127.0.0.1:8080/v1",
-  model: "qwen3.5-9b",
-  timeoutMs: 900_000,
-  streamIdleTimeoutMs: 300_000,
-};
-
-const REMOTE_DEFAULTS: ProviderDefaults = {
-  baseUrl: "https://api.openai.com/v1",
-  model: "gpt-4o-mini",
+const DEFAULTS = {
+  baseUrl: "https://api.deepseek.com",
+  model: "deepseek-flash",
   timeoutMs: 180_000,
   streamIdleTimeoutMs: 120_000,
 };
@@ -55,112 +33,36 @@ function positiveFloat(raw: string | undefined, fallback: number): number {
 }
 
 /**
- * Pick the model backend. `local` (the default) talks to a llama.cpp server on
- * this machine; `remote` keeps the original OpenAI-compatible API as a
- * fallback, so the old OPENAI_* settings stay usable.
+ * Read the model API settings. Any OpenAI-compatible endpoint works; the
+ * defaults target DeepSeek because that is what this agent ships with.
  */
 export function readModelSettings(env: NodeJS.ProcessEnv = process.env): ModelSettings {
-  const provider = (env.MODEL_PROVIDER ?? "local").trim().toLowerCase();
-  if (provider !== "local" && provider !== "remote") {
-    throw new Error(`Unsupported MODEL_PROVIDER "${provider}": expected "local" or "remote".`);
+  const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) {
+    throw new Error("Missing OPENAI_API_KEY: set it in .env to call the model API.");
   }
-  const defaults = provider === "local" ? LOCAL_DEFAULTS : REMOTE_DEFAULTS;
-  const baseUrl = (provider === "local" ? env.LOCAL_MODEL_BASE_URL : env.OPENAI_BASE_URL) ?? defaults.baseUrl;
-  const model = (provider === "local" ? env.LOCAL_MODEL : env.MODEL) ?? defaults.model;
-  const apiKey = provider === "local" ? env.LOCAL_MODEL_API_KEY ?? "local" : env.OPENAI_API_KEY ?? "";
-  if (provider === "remote" && !apiKey) {
-    throw new Error(
-      "Missing OPENAI_API_KEY for MODEL_PROVIDER=remote. Set the key, or use the default local llama.cpp provider.",
-    );
-  }
-  const enableThinking =
-    provider === "local" ? (env.LOCAL_MODEL_ENABLE_THINKING ?? "false").trim().toLowerCase() === "true" : false;
-  // An explicit body field still wins: these are defaults, not policy.
-  const sampling: SamplingOptions = {
-    maxTokens: positiveInt(env.MODEL_MAX_TOKENS, 2048),
-    temperature: positiveFloat(env.MODEL_TEMPERATURE, 0.3),
-    topP: positiveFloat(env.MODEL_TOP_P, 0.9),
-    // `repeat_penalty` is a llama.cpp extension; the hosted API would reject it.
-    ...(provider === "local" ? { repeatPenalty: positiveFloat(env.MODEL_REPEAT_PENALTY, 1.05) } : {}),
-  };
   return {
-    provider,
-    baseUrl: baseUrl.replace(/\/+$/, ""),
+    baseUrl: (env.OPENAI_BASE_URL ?? DEFAULTS.baseUrl).replace(/\/+$/, ""),
     apiKey,
-    model,
-    timeoutMs: positiveInt(env.MODEL_TIMEOUT_MS, defaults.timeoutMs),
-    streamIdleTimeoutMs: positiveInt(env.STREAM_IDLE_TIMEOUT_MS, defaults.streamIdleTimeoutMs),
-    enableThinking,
-    extraBody:
-      provider === "local"
-        ? { chat_template_kwargs: { enable_thinking: enableThinking } }
-        : {},
-    sampling,
+    model: env.MODEL ?? DEFAULTS.model,
+    timeoutMs: positiveInt(env.MODEL_TIMEOUT_MS, DEFAULTS.timeoutMs),
+    streamIdleTimeoutMs: positiveInt(env.STREAM_IDLE_TIMEOUT_MS, DEFAULTS.streamIdleTimeoutMs),
+    sampling: {
+      maxTokens: positiveInt(env.MODEL_MAX_TOKENS, 2048),
+      temperature: positiveFloat(env.MODEL_TEMPERATURE, 0.3),
+      topP: positiveFloat(env.MODEL_TOP_P, 0.9),
+    },
   };
 }
 
 export function describeModel(settings: ModelSettings): string {
-  if (settings.provider !== "local") {
-    return `remote model "${settings.model}" at ${settings.baseUrl}`;
-  }
-  const thinking = settings.enableThinking ? "thinking on" : "thinking off";
-  return `local llama.cpp model "${settings.model}" at ${settings.baseUrl} (${thinking})`;
-}
-
-/** What `llama-server` reports about itself; everything is optional. */
-export interface ServerInfo {
-  /** Context window actually loaded (`-c`), independent of what the client assumes. */
-  contextLimit?: number;
-  /** Model alias or file name the server loaded. */
-  modelName?: string;
-}
-
-/** `llama-server` serves `/props` at the host root, not under `/v1`. */
-export function getServerEndpoint(baseUrl: string): string {
-  return baseUrl.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
-}
-
-/**
- * Ask `llama-server` for its real context size. A small local model cannot take
- * the 24k the client assumes by default, and guessing costs a failed request.
- */
-export async function readServerInfo(baseUrl: string, timeoutMs = 1500): Promise<ServerInfo> {
-  const endpoint = getServerEndpoint(baseUrl);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${endpoint}/props`, { signal: controller.signal });
-    if (!response.ok) return {};
-    const data = (await response.json()) as {
-      model_path?: string;
-      model_alias?: string;
-      default_generation_settings?: { n_ctx?: number };
-    };
-    const context = data.default_generation_settings?.n_ctx;
-    // model_alias may be the full file path llama-server was launched with.
-    const rawName = (data.model_alias || data.model_path)?.split(/[\\/]/).pop();
-    return {
-      contextLimit: typeof context === "number" && context > 0 ? context : undefined,
-      modelName: rawName?.replace(/\.gguf$/i, ""),
-    };
-  } catch {
-    // A server that cannot describe itself is not a reason to fail the run.
-    return {};
-  } finally {
-    clearTimeout(timer);
-  }
+  return `model "${settings.model}" at ${settings.baseUrl}`;
 }
 
 export function createModel(env: NodeJS.ProcessEnv = process.env): { model: Model; settings: ModelSettings } {
   const settings = readModelSettings(env);
   return {
-    model: new OpenAICompatibleModel(
-      settings.apiKey,
-      settings.model,
-      settings.baseUrl,
-      settings.extraBody,
-      settings.sampling,
-    ),
+    model: new OpenAICompatibleModel(settings.apiKey, settings.model, settings.baseUrl, {}, settings.sampling),
     settings,
   };
 }

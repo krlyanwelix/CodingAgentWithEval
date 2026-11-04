@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+﻿import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Agent } from "../src/agent.js";
 import { setWorkspaceRoot, tools } from "../src/tools.js";
@@ -32,7 +32,6 @@ export interface TaskAggregate {
 export interface RunSummary {
   runId: string;
   model: string;
-  provider: string;
   skill: string | null;
   results: TaskResult[];
   aggregates: TaskAggregate[];
@@ -141,7 +140,6 @@ export async function runEval(options: RunOptions): Promise<RunSummary> {
         ts: new Date().toISOString(),
         runId,
         model: settings.model,
-        provider: settings.provider,
         skill: options.skillPath ?? null,
         task: task.id,
         attempt,
@@ -193,7 +191,6 @@ export async function runEval(options: RunOptions): Promise<RunSummary> {
   const summary: RunSummary = {
     runId,
     model: settings.model,
-    provider: settings.provider,
     skill: options.skillPath ?? null,
     results,
     aggregates,
