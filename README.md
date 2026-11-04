@@ -1,4 +1,4 @@
-﻿# LilPiAgent
+# LilPiAgent
 
 LilPiAgent is a minimal TypeScript CLI agent inspired by pi-agent:
 
@@ -170,4 +170,4 @@ npm run evolve -- --skill=skills/coding-guide/SKILL.md
 - `eval/tasks.ts`：每个任务 = 种子文件 + prompt + 自动判分命令；任务在 `data/eval/<runId>/<task>/` 的独立沙箱里运行（`setWorkspaceRoot` 把内置工具指到沙箱，不会碰仓库）。
 - `eval/run.ts`：跑完追加一条 JSONL（prompt、工具序列、steps、reward、消息），可直接作为 Agentic RL 的离线轨迹集。
 - `eval/evolve.ts`：读失败轨迹 → 模型重写 skill → 候选 skill 在失败任务上复跑 → 全部通过才写回，并在 `skills/<name>/HISTORY.md` 记录一次进化。文本学习率 = 单次最多 15 行改动，`eval/proposal.ts` 有单测覆盖。
-- 默认 5 个任务在 deepseek-flash 上 5/5 通过、约 30 秒；切到本地模型改 `MODEL_PROVIDER=local` 即可复用同一套评测。
+- 默认 14 个任务：deepseek-flash 全过约 2 分钟；本地 qwen3.5-9b 为 13/14、约 5 分钟，失败的是多文件统计任务（耗尽 20 轮），正好是训练需要的失败样本。切到本地模型改 `MODEL_PROVIDER=local` 即可复用同一套评测。

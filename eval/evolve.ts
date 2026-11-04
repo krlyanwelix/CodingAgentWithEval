@@ -1,4 +1,4 @@
-﻿import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { createModel } from "../src/model-config.js";
 import type { Message } from "../src/types.js";
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     [],
   );
 
-  const proposal = parseProposal(proposalText);
+  const proposal = parseProposal(proposalText.content ?? "");
   const changed = countChangedLines(current.split("\n"), proposal.content.split("\n"));
   console.log(`\n## Proposal (${settings.model})\nchanged lines: ${changed}\nrationale: ${proposal.rationale}`);
   const verdict = validateProposal(current, proposal.content, MAX_CHANGED_LINES);
