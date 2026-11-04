@@ -339,3 +339,54 @@ test("repeating the same tool call stops the run after the second skip", async (
   assert.equal(results.length, 3);
   assert.match(results[1]!, /Skipped/);
 });
+
+test("hitting the turn limit ends the run with a harness answer instead of throwing", async () => {
+  const tool: Tool = {
+    definition: { name: "tick", description: "Ticks.", parameters: { type: "object", properties: {} } },
+    async execute() {
+      return "tick";
+    },
+  };
+  const call = (id: string): Message => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name: "tick", arguments: `{"id":"${id}"}` } }],
+  });
+  const model = new ScriptedModel([call("a"), call("b"), call("c"), call("d")]);
+  const agent = new Agent({ model, tools: [tool], systemPrompt: "sys", maxTurns: 2 });
+
+  const events = await drain(agent.run("go"));
+  const warning = events.find((event) => event.type === "warning");
+  assert.ok(warning && warning.type === "warning");
+  assert.match(warning.message, /turn limit/i);
+  const end = events.find((event) => event.type === "agent_end");
+  assert.ok(end && end.type === "agent_end");
+  assert.match(String(end.message.content), /Reached the 2-turn limit/);
+});
+
+test("an oversized recent tool result is shrunk instead of failing the run", async () => {
+  const big: Tool = {
+    definition: { name: "big", description: "Returns a huge string.", parameters: { type: "object", properties: {} } },
+    async execute() {
+      return "x".repeat(8000);
+    },
+  };
+  const model = new ScriptedModel([
+    { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "big", arguments: "{}" } }] },
+    { role: "assistant", content: "ok" },
+  ]);
+  const agent = new Agent({
+    model,
+    tools: [big],
+    systemPrompt: "sys",
+    context: { maxInputTokens: 400, reserveTokens: 100, keepRecentTurns: 3, summaryMaxTokens: 100 },
+  });
+
+  const events = await drain(agent.run("go"));
+  const end = events.find((event) => event.type === "agent_end");
+  assert.ok(end && end.type === "agent_end");
+  assert.equal(end.message.content, "ok");
+  assert.equal(model.calls.length, 2);
+  const payloadChars = (model.calls[1] ?? []).reduce((sum, message) => sum + String(message.content ?? "").length, 0);
+  assert.ok(payloadChars < 4000, `payload should be shrunk, got ${payloadChars}`);
+});

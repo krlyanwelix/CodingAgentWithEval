@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Message } from "./types.js";
+import { estimateTokens } from "./tokens.js";
 
 /**
  * Token budgeting for the model context.
@@ -41,16 +42,7 @@ export const DEFAULT_CONTEXT_OPTIONS: ContextOptions = {
 
 const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 
-/** Rough token count for a string (CJK ≈ 1 token/char, other text ≈ 3.6 chars/token). */
-export function estimateTokens(text: string | null | undefined): number {
-  if (!text) return 0;
-  let cjk = 0;
-  for (const char of text) {
-    if (CJK.test(char)) cjk++;
-  }
-  const rest = text.length - cjk;
-  return Math.max(1, Math.ceil(cjk * 0.9 + rest / 3.6));
-}
+
 
 export function estimateMessageTokens(message: Message): number {
   let tokens = 8 + estimateTokens(message.content);

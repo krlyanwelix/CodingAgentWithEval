@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
@@ -80,7 +80,7 @@ test("createModel builds a model without touching the network", () => {
 
 test("sampling defaults keep a small model short and predictable", () => {
   const settings = readModelSettings({});
-  assert.deepEqual(settings.sampling, { maxTokens: 1024, temperature: 0.3, topP: 0.9, repeatPenalty: 1.05 });
+  assert.deepEqual(settings.sampling, { maxTokens: 2048, temperature: 0.3, topP: 0.9, repeatPenalty: 1.05 });
 });
 
 test("sampling can be tuned from the environment", () => {
@@ -93,14 +93,14 @@ test("sampling can be tuned from the environment", () => {
   assert.deepEqual(settings.sampling, { maxTokens: 256, temperature: 0.7, topP: 0.5, repeatPenalty: 1.2 });
 
   const broken = readModelSettings({ MODEL_MAX_TOKENS: "zero", MODEL_TEMPERATURE: "-1" });
-  assert.equal(broken.sampling.maxTokens, 1024);
+  assert.equal(broken.sampling.maxTokens, 2048);
   assert.equal(broken.sampling.temperature, 0.3);
 });
 
 test("the hosted API gets no llama.cpp-only sampling field", () => {
   const settings = readModelSettings({ MODEL_PROVIDER: "remote", OPENAI_API_KEY: "sk-test" });
   assert.equal(settings.sampling.repeatPenalty, undefined);
-  assert.equal(settings.sampling.maxTokens, 1024);
+  assert.equal(settings.sampling.maxTokens, 2048);
 });
 
 test("the server endpoint drops the /v1 suffix", () => {

@@ -77,7 +77,7 @@ export function readModelSettings(env: NodeJS.ProcessEnv = process.env): ModelSe
     provider === "local" ? (env.LOCAL_MODEL_ENABLE_THINKING ?? "false").trim().toLowerCase() === "true" : false;
   // An explicit body field still wins: these are defaults, not policy.
   const sampling: SamplingOptions = {
-    maxTokens: positiveInt(env.MODEL_MAX_TOKENS, 1024),
+    maxTokens: positiveInt(env.MODEL_MAX_TOKENS, 2048),
     temperature: positiveFloat(env.MODEL_TEMPERATURE, 0.3),
     topP: positiveFloat(env.MODEL_TOP_P, 0.9),
     // `repeat_penalty` is a llama.cpp extension; the hosted API would reject it.

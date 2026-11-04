@@ -1,4 +1,4 @@
-# LilPiAgent
+﻿# LilPiAgent
 
 LilPiAgent is a minimal TypeScript CLI agent inspired by pi-agent:
 
@@ -130,12 +130,12 @@ Every request carries explicit sampling defaults: a local `llama-server` otherwi
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MODEL_MAX_TOKENS` | `1024` | Hard cap on one answer |
+| `MODEL_MAX_TOKENS` | `2048` | Hard cap on one answer |
 | `MODEL_TEMPERATURE` | `0.3` | Lower = steadier tool calls |
 | `MODEL_TOP_P` | `0.9` | Nucleus sampling |
 | `MODEL_REPEAT_PENALTY` | `1.05` | llama.cpp only; omitted for the hosted API |
 
-`src/prompt.ts` holds the behaviour contract the model is given: list before guessing a path, read before editing, one tool call at a time, never repeat a failed call, and answer in at most five lines. Two guards back that contract up in `src/agent.ts`: an identical tool call that just ran is skipped instead of executed again, and two failures in a row append a change-approach hint to the tool result.
+`src/prompt.ts` holds the behaviour contract the model is given: list before guessing a path, read before editing, send independent reads as parallel calls in one message, create files with `write` (never a bash heredoc), keep one write under ~80 lines, never repeat a failed call, verify before claiming something ran, and answer in at most five lines. When the budget still does not fit after compaction, recent tool results are elided and then halved instead of failing the run. Hitting the turn limit ends with a `[harness]` message rather than throwing. Two guards back the contract up in `src/agent.ts`: an identical tool call that just ran is skipped instead of executed again, and two failures in a row append a change-approach hint to the tool result.
 
 ## Development
 

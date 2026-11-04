@@ -4,10 +4,10 @@ import {
   compactHistory,
   elideLongToolResults,
   estimateMessagesTokens,
-  estimateTokens,
   truncateToolOutput,
   type ContextOptions,
 } from "./context.js";
+import { estimateTokens } from "./tokens.js";
 import type { AgentEvent, Message, Model, Tool, ToolCall, ToolDefinition } from "./types.js";
 
 export interface AgentOptions {
@@ -170,7 +170,18 @@ export class Agent {
           return;
         }
       }
-      throw new Error(`Agent reached the ${this.maxTurns}-turn limit`);
+      const stopped: Message = {
+        role: "assistant",
+        content: `[harness] Reached the ${this.maxTurns}-turn limit before finishing. The work above may be incomplete.`,
+      };
+      this.messages.push(stopped);
+      yield {
+        type: "warning",
+        message: `Reached the ${this.maxTurns}-turn limit; stopping instead of failing the whole run.`,
+      };
+      yield { type: "message_end", message: stopped };
+      yield { type: "agent_end", message: stopped };
+      return;
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       if (signal?.aborted) {
@@ -194,26 +205,54 @@ export class Agent {
     const options = this.contextOptions;
     const system = this.messages[0]!;
     const systemTokens = estimateMessagesTokens([system]);
-    const limit = options.maxInputTokens - options.reserveTokens;
+    const limit = Math.max(1, options.maxInputTokens - options.reserveTokens);
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (this.estimatePayload() <= limit) break;
+
+      // Each retry shows the model a cheaper view of the same history: smaller
+      // tool results and fewer protected turns. One oversized recent turn must
+      // not turn into a hard error in the middle of a session.
       const rest = this.messages.slice(1);
-      const used = estimateMessagesTokens(rest) + estimateTokens(this.digest) + systemTokens;
-      if (used <= limit) break;
-
       const working =
         attempt === 0
           ? rest
-          : elideLongToolResults(rest, Math.max(600, Math.round(options.toolResultMaxChars * 0.4)));
-      const available = limit - systemTokens - estimateTokens(this.digest);
-      const compacted = compactHistory(working, options, Math.max(256, available));
+          : elideLongToolResults(rest, Math.max(200, Math.round(options.toolResultMaxChars / (attempt + 1))));
+      const available = Math.max(128, limit - systemTokens - estimateTokens(this.digest));
+      const compacted = compactHistory(
+        working,
+        { ...options, keepRecentTurns: Math.max(1, options.keepRecentTurns - Math.floor(attempt / 2)) },
+        available,
+      );
       if (compacted.droppedTurns > 0) {
         this.digest = capDigest(`${this.digest}\n${compacted.digest}`.trim(), options.summaryMaxTokens);
       }
       this.messages = [system, ...compacted.messages];
     }
 
-    const used = estimateMessagesTokens(this.messages) + estimateTokens(this.digest);
+    // Last resort: halve the largest messages until the payload fits. Better to
+    // send a shortened history than to fail the run at the door.
+    for (let guard = 0; guard < 16 && this.estimatePayload() > limit; guard += 1) {
+      const body = this.messages.slice(1);
+      let biggest = -1;
+      let biggestSize = 0;
+      for (let index = 0; index < body.length; index += 1) {
+        const size = typeof body[index]!.content === "string" ? (body[index]!.content as string).length : 0;
+        if (size > biggestSize) {
+          biggest = index;
+          biggestSize = size;
+        }
+      }
+      if (biggest < 0 || biggestSize < 240) break;
+      const content = body[biggest]!.content as string;
+      body[biggest] = {
+        ...body[biggest]!,
+        content: `${content.slice(0, Math.floor(content.length / 2))}\n\n... [已截断以适配上下文] ...`,
+      };
+      this.messages = [system, ...body];
+    }
+
+    const used = this.estimatePayload();
     if (used > limit) {
       throw new Error(
         `Context budget exceeded: ~${used} tokens > ${limit} allowed. ` +
@@ -221,6 +260,10 @@ export class Agent {
       );
     }
     return this.buildPayload();
+  }
+
+  private estimatePayload(): number {
+    return estimateMessagesTokens(this.messages) + estimateTokens(this.digest);
   }
 
   private buildPayload(): Message[] {

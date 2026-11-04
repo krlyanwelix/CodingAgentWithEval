@@ -8,10 +8,10 @@ import {
   compactHistory,
   elideLongToolResults,
   estimateMessagesTokens,
-  estimateTokens,
   splitTurns,
   truncateToolOutput,
 } from "./context.js";
+import { estimateTokens } from "./tokens.js";
 import type { Message } from "./types.js";
 
 function history(turns: number, filler: string): Message[] {
