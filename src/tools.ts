@@ -1,22 +1,71 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Tool, ToolContext } from "./types.js";
 
 const workspaceRoot = resolve(process.cwd());
 const execFileAsync = promisify(execFile);
 
-function findBash(): string | undefined {
+export function findBash(): string | undefined {
   if (process.platform !== "win32") return "/bin/bash";
-  const candidates = [
+  const git = whereExecutable("git");
+  // <root>\cmd\git.exe -> <root>\bin\bash.exe
+  const fromGit = git ? join(dirname(dirname(git)), "bin", "bash.exe") : undefined;
+  // Install locations win over PATH: `where bash` often finds the WSL launcher
+  // (C:\Windows\System32\bash.exe), which is not Git Bash.
+  const installs = [
     process.env.GIT_BASH_PATH,
+    fromGit,
+    "E:\\Git\\bin\\bash.exe",
+    "D:\\Git\\bin\\bash.exe",
     process.env.ProgramFiles && join(process.env.ProgramFiles, "Git", "bin", "bash.exe"),
     process.env["ProgramFiles(x86)"] && join(process.env["ProgramFiles(x86)"], "Git", "bin", "bash.exe"),
     process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"),
   ].filter((path): path is string => Boolean(path));
-  return candidates.find((path) => existsSync(path));
+  const installed = installs.find((path) => existsSync(path));
+  if (installed) return installed;
+  const fromPath = whereExecutable("bash");
+  if (!fromPath || /\\Windows\\System32\\|\\WindowsApps\\/i.test(fromPath)) return undefined;
+  return existsSync(fromPath) ? fromPath : undefined;
+}
+
+/** First line of `where <name>`, or undefined when the executable is not on PATH. */
+function whereExecutable(name: string): string | undefined {
+  try {
+    const output = execFileSync("where.exe", [name], { encoding: "utf8", windowsHide: true });
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+  } catch {
+    return undefined;
+  }
+}
+
+function realpathOrSelf(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * True when the nearest existing ancestor still resolves inside the workspace.
+ * Checked on the ancestor so writing a new file is judged by its directory, and
+ * on the file itself so a link pointing out of the workspace is caught.
+ */
+function insideWorkspace(target: string): boolean {
+  let probe = target;
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const rel = relative(realpathOrSelf(workspaceRoot), realpathOrSelf(probe));
+  return !(isAbsolute(rel) || rel === ".." || rel.startsWith(".." + sep));
 }
 
 function workspacePath(value: unknown): string {
@@ -25,6 +74,11 @@ function workspacePath(value: unknown): string {
   const rel = relative(workspaceRoot, target);
   if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..\\`) || rel.startsWith(`../`)) {
     throw new Error("path must stay inside the current working directory");
+  }
+  // Lexical checks alone miss links: a junction inside the workspace can still
+  // point outside of it.
+  if (!insideWorkspace(target)) {
+    throw new Error("path resolves outside the current working directory through a link");
   }
   return target;
 }
@@ -104,7 +158,11 @@ export const tools: Tool[] = [
       if (typeof input.command !== "string" || input.command.trim() === "") throw new Error("command must be a non-empty string");
       const bash = findBash();
       if (!bash) {
-        return "Git Bash was not found. Install Git for Windows from https://git-scm.com/download/win, then restart the agent. On Windows you can also ask the user to run: winget install --id Git.Git -e";
+        return (
+          "Git Bash was not found. Set GIT_BASH_PATH to the full path of bash.exe " +
+          "(for example E:\\Git\\bin\\bash.exe), or install Git for Windows from " +
+          "https://git-scm.com/download/win and restart the agent."
+        );
       }
       const timeout = typeof input.timeoutMs === "number" ? Math.min(120000, Math.max(1000, Math.floor(input.timeoutMs))) : 30000;
       try {

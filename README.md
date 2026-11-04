@@ -102,8 +102,15 @@ Every prompt is fitted into a token budget (default 24000). When the history out
 | `CONTEXT_SPILL_DIR` | `data/tool-output` | Where full tool output is spooled |
 | `MODEL_TIMEOUT_MS` | `180000` | Hard timeout for a non-streaming call |
 | `STREAM_IDLE_TIMEOUT_MS` | `120000` | Abort a stream that stops producing bytes |
+| `GIT_BASH_PATH` | auto | Full path of `bash.exe` when auto-detection picks the wrong one |
 
 Ctrl+C while the agent is working cancels the current run: the in-flight model request and the running tool are aborted, the partial answer is saved to the turn, and the CLI returns to the prompt. Press it again at the prompt to exit.
+
+Requests to the model server are retried up to three times on `429`/`5xx` with a short backoff; a refused connection is reported as "Cannot reach the model API at ...". When the server reports `finish_reason: "length"` the agent emits a warning that the answer was cut off, because an incomplete tool call would otherwise just fail to parse. Assistant `reasoning_content` is kept in the history and sent back to the model but never shown as the answer.
+
+On Windows the `bash` tool looks for Git Bash in this order: `GIT_BASH_PATH`, the directory of the `git` on `PATH` (`<root>\bin\bash.exe`), `C:\Program Files\Git`, `E:\Git`, `D:\Git`, and `%LOCALAPPDATA%\Programs\Git`, and it deliberately skips the WSL launcher in `C:\Windows\System32`.
+
+Resuming a session first closes any turn the previous process left unfinished, so the history never ends on a user message that has no answer.
 
 ## Development
 

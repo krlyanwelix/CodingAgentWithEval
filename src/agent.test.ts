@@ -177,3 +177,22 @@ test("an aborted model call is reported with the partial text that streamed", as
   assert.ok(aborted && aborted.type === "aborted");
   assert.equal(aborted.partial, "half an ans");
 });
+
+test("a model that stops at its output limit produces a truncation warning", async () => {
+  const model = new ScriptedModel([{ role: "assistant", content: "cut off here", finishReason: "length" }]);
+  const agent = new Agent({ model, tools: [], systemPrompt: "sys" });
+  const events = await drain(agent.run("go"));
+  const warning = events.find((event) => event.type === "warning");
+  assert.ok(warning && warning.type === "warning");
+  assert.match(warning.message, /output limit/);
+  assert.ok(events.some((event) => event.type === "agent_end"));
+});
+
+test("an empty answer produces a warning instead of ending silently", async () => {
+  const model = new ScriptedModel([{ role: "assistant", content: "" }]);
+  const agent = new Agent({ model, tools: [], systemPrompt: "sys" });
+  const events = await drain(agent.run("go"));
+  const warning = events.find((event) => event.type === "warning");
+  assert.ok(warning && warning.type === "warning");
+  assert.match(warning.message, /empty answer/);
+});

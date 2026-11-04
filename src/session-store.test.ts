@@ -101,3 +101,25 @@ test("listSessions counts turns and reports the newest session first", () => {
     assert.ok(sessions[0]!.updatedAt >= sessions[1]!.updatedAt);
   });
 });
+
+test("closePendingTurns closes a turn that died before it answered", () => {
+  withStore((store) => {
+    const sessionId = store.createSession();
+    const answered = store.createTurn(sessionId, null, "q1");
+    store.completeTurn(answered, "a1", []);
+    const interrupted = store.createTurn(sessionId, answered, "q2");
+
+    assert.equal(store.closePendingTurns(sessionId), 1);
+    const nodes = store.listNodes(sessionId);
+    assert.equal(nodes[1]?.id, interrupted);
+    assert.match(String(nodes[1]?.assistantContent), /中断/);
+
+    const path = store.getPath(interrupted);
+    assert.deepEqual(
+      path.map((message) => message.role),
+      ["user", "assistant", "user", "assistant"],
+    );
+    // Nothing left to close on a second pass.
+    assert.equal(store.closePendingTurns(sessionId), 0);
+  });
+});

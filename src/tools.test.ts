@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, rmdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { tools } from "./tools.js";
+import { findBash, tools } from "./tools.js";
 import type { Tool } from "./types.js";
 
 function tool(name: string): Tool {
@@ -23,6 +25,31 @@ test("read numbers the requested line range", async () => {
 test("read refuses paths outside the workspace", async () => {
   await assert.rejects(tool("read").execute({ path: "../outside.txt" }), /inside the current working directory/);
   await assert.rejects(tool("read").execute({ path: join("..", "..", "Windows", "win.ini") }), /inside/);
+});
+
+test("findBash locates this machine's Git Bash", (context) => {
+  const bash = findBash();
+  if (!bash) {
+    context.skip("Git Bash is not installed");
+    return;
+  }
+  assert.ok(existsSync(bash), `bash not found at ${bash}`);
+  assert.match(bash, /bash\.exe$/i);
+});
+
+test("read refuses a junction that points outside the workspace", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("junctions are Windows-only");
+    return;
+  }
+  const relativePath = join("data", `escape-${randomUUID()}`);
+  const linkPath = join(process.cwd(), relativePath);
+  execFileSync("cmd.exe", ["/c", "mklink", "/J", linkPath, tmpdir()], { windowsHide: true });
+  try {
+    await assert.rejects(tool("read").execute({ path: join(relativePath, "probe.txt") }), /through a link/);
+  } finally {
+    rmdirSync(linkPath);
+  }
 });
 
 test("write then edit then read round-trips through the file tools", async () => {
@@ -66,4 +93,13 @@ test("bash reports a non-zero exit code instead of throwing", async (context) =>
     return;
   }
   assert.match(result, /exit_code: 3/);
+});
+
+test("bash keeps the workspace as its working directory", async (context) => {
+  const result = await tool("bash").execute({ command: "pwd" });
+  if (result.includes("Git Bash was not found")) {
+    context.skip("Git Bash is not installed");
+    return;
+  }
+  assert.match(result.replace(/\//g, "\\").toLowerCase(), /myagentproject/);
 });

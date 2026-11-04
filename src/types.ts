@@ -5,6 +5,10 @@ export interface Message {
   content: string | null;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  /** Thinking returned by reasoning models; kept so history round-trips unchanged. */
+  reasoning_content?: string;
+  /** Provider stop reason, e.g. "stop", "length", "tool_calls". */
+  finishReason?: string;
 }
 
 export interface ToolCall {
@@ -55,6 +59,8 @@ export type AgentEvent =
   | { type: "tool_start"; toolCall: ToolCall }
   | { type: "tool_end"; toolCall: ToolCall; result: string }
   | { type: "agent_end"; message: Message }
+  /** Non-fatal problem the caller should surface, e.g. a truncated answer. */
+  | { type: "warning"; message: string }
   /** The run stopped because the caller aborted; `partial` is the text streamed so far. */
   | { type: "aborted"; partial: string }
   | { type: "error"; error: Error };

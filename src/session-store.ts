@@ -167,6 +167,18 @@ export class SessionStore {
     this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = (SELECT session_id FROM turns WHERE id = ?)").run(now, nodeId);
   }
 
+  closePendingTurns(sessionId: string): number {
+    // A turn with no assistant content means the process died mid-turn. Marking
+    // it keeps a resumed history from ending on a dangling user message.
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE turns
+      SET assistant_content = ?, updated_at = ?
+      WHERE session_id = ? AND assistant_content IS NULL
+    `).run("（这一回合在完成前被中断）", now, sessionId);
+    return result.changes;
+  }
+
   forkFromNode(nodeId: string): { sessionId: string; nodeId: string } {
     const sourceTurns = this.getTurnPath(nodeId);
     const sessionId = this.createSession("Forked session");

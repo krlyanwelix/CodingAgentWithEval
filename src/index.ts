@@ -118,6 +118,7 @@ if (nodes.length > 0) {
     break;
   }
 }
+if (currentNodeId) sessionStore.closePendingTurns(sessionId);
 const history = currentNodeId ? sessionStore.getPath(currentNodeId) : [];
 const agent = new Agent({
   model,

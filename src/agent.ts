@@ -107,7 +107,19 @@ export class Agent {
         yield { type: "message_end", message: assistantMessage };
 
         const calls = assistantMessage.tool_calls ?? [];
+        const truncated = assistantMessage.finishReason === "length" || assistantMessage.finishReason === "max_tokens";
+        if (truncated) {
+          yield {
+            type: "warning",
+            message:
+              "The model stopped at its output limit, so this answer is cut off. " +
+              "Ask for a smaller piece, or raise the server's max tokens.",
+          };
+        }
         if (calls.length === 0) {
+          if (!truncated && !(assistantMessage.content ?? "").trim() && !assistantMessage.reasoning_content) {
+            yield { type: "warning", message: "The model returned an empty answer." };
+          }
           yield { type: "agent_end", message: assistantMessage };
           return;
         }

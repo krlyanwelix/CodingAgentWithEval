@@ -21,22 +21,51 @@ function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal
  */
 function sanitizeMessages(messages: Message[]): Message[] {
   return messages.map((message) => {
-    const content = message.content ?? (message.role === "assistant" || message.role === "tool" ? "" : null);
-    if (message.role === "assistant" && message.tool_calls && message.tool_calls.length > 0) {
+    if (message.role === "tool") {
+      return { role: "tool", content: message.content ?? "", tool_call_id: message.tool_call_id };
+    }
+    if (message.role === "assistant") {
       return {
         role: "assistant",
-        content: message.content,
-        tool_calls: message.tool_calls.map((call) => ({
-          id: call.id,
-          type: "function" as const,
-          function: { name: call.function.name, arguments: call.function.arguments || "{}" },
-        })),
+        content: message.content ?? "",
+        ...(message.tool_calls && message.tool_calls.length > 0
+          ? {
+              tool_calls: message.tool_calls.map((call) => ({
+                id: call.id,
+                type: "function" as const,
+                function: { name: call.function.name, arguments: call.function.arguments || "{}" },
+              })),
+            }
+          : {}),
+        // Reasoning models need their own thinking fed back, or the template re-thinks it.
+        ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
       };
     }
-    if (message.role === "tool") {
-      return { role: "tool", content, tool_call_id: message.tool_call_id };
+    return { role: message.role, content: message.content ?? null };
+  });
+}
+
+/** 429 and 5xx mean "try again in a moment"; connection and auth errors do not. */
+function isRetryable(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /^Model API (429|5\d\d):/.test(message);
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Aborted"));
+      return;
     }
-    return { role: message.role, content };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("Aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -74,30 +103,56 @@ export class OpenAICompatibleModel implements Model {
     tools: ToolDefinition[] = [],
     options: ModelRequestOptions = {},
   ): Promise<Message> {
-    const timeout = options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined;
-    const signal = combineSignals(options.signal, timeout);
-    const response = await fetch(this.endpoint(), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${this.apiKey}`,
-      },
-      body: this.body(messages, tools, false),
-      signal,
+    return this.retrying(options, async () => {
+      const response = await this.post(this.body(messages, tools, false), options, false);
+      const payload = (await response.json()) as {
+        choices?: Array<{ message?: Message; finish_reason?: string }>;
+        error?: { message?: string };
+      };
+      const choice = payload.choices?.[0];
+      if (!choice?.message) throw new Error(payload.error?.message ?? "Model returned no message");
+      return {
+        ...choice.message,
+        ...(choice.finish_reason ? { finishReason: choice.finish_reason } : {}),
+      };
     });
+  }
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Model API ${response.status}: ${body}`);
+  /** POST one chat-completions body; connection failures become an actionable error. */
+  private async post(body: string, options: ModelRequestOptions, stream: boolean): Promise<Response> {
+    const timeout = !stream && options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined;
+    const signal = combineSignals(options.signal, timeout);
+    let response: Response;
+    try {
+      response = await fetch(this.endpoint(), {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
+        body,
+        signal,
+      });
+    } catch (cause) {
+      if (options.signal?.aborted) throw cause;
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Cannot reach the model API at ${this.endpoint()}: ${detail}. Is the model server running?`);
     }
+    if (!response.ok) throw new Error(`Model API ${response.status}: ${await response.text()}`);
+    return response;
+  }
 
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: Message; finish_reason?: string }>;
-      error?: { message?: string };
-    };
-    const message = payload.choices?.[0]?.message;
-    if (!message) throw new Error(payload.error?.message ?? "Model returned no message");
-    return message;
+  /**
+   * Retry only errors that a short wait can fix (rate limits, 5xx). Auth errors,
+   * cancellations and unreachable-server errors fail fast.
+   */
+  private async retrying<T>(options: ModelRequestOptions, run: () => Promise<T>): Promise<T> {
+    const attempts = 3;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await run();
+      } catch (cause) {
+        if (attempt >= attempts || options.signal?.aborted || !isRetryable(cause)) throw cause;
+        await abortableSleep(400 * attempt, options.signal);
+      }
+    }
   }
 
   async *stream(
@@ -124,19 +179,17 @@ export class OpenAICompatibleModel implements Model {
     };
 
     try {
-      const response = await fetch(this.endpoint(), {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
-        body: this.body(messages, tools, true),
-        signal,
-      });
-      if (!response.ok) throw new Error(`Model API ${response.status}: ${await response.text()}`);
+      const response = await this.retrying({ ...options, signal }, () =>
+        this.post(this.body(messages, tools, true), { ...options, signal }, true),
+      );
       if (!response.body) throw new Error("Model API returned no streaming body");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let content = "";
+      let reasoning = "";
+      let finishReason: string | undefined;
       const calls = new Map<number, ToolCall>();
       let done = false;
 
@@ -150,8 +203,10 @@ export class OpenAICompatibleModel implements Model {
         }
         let payload: {
           choices?: Array<{
+            finish_reason?: string | null;
             delta?: {
               content?: string | null;
+              reasoning_content?: string | null;
               tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>;
             };
           }>;
@@ -163,8 +218,12 @@ export class OpenAICompatibleModel implements Model {
           // ends up here; skip the malformed line rather than killing the run.
           return undefined;
         }
-        const delta = payload.choices?.[0]?.delta;
+        const choice = payload.choices?.[0];
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        const delta = choice?.delta;
         if (!delta) return undefined;
+        // Thinking stays out of the answer, but is kept so history can round-trip.
+        if (delta.reasoning_content) reasoning += delta.reasoning_content;
         const text = delta.content ?? undefined;
         if (text) content += text;
         for (const part of delta.tool_calls ?? []) {
@@ -215,6 +274,8 @@ export class OpenAICompatibleModel implements Model {
           role: "assistant",
           content: content || null,
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          ...(reasoning ? { reasoning_content: reasoning } : {}),
+          ...(finishReason ? { finishReason } : {}),
         },
       };
     } finally {

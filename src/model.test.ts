@@ -163,3 +163,49 @@ test("extra body fields are sent and reasoning deltas stay out of the answer", a
     await closeServer(server);
   }
 });
+
+test("complete retries a retryable failure and then succeeds", async () => {
+  let attempts = 0;
+  const { server, baseUrl } = await startServer((_request, response) => {
+    attempts += 1;
+    if (attempts === 1) {
+      response.writeHead(500, { "content-type": "text/plain" });
+      response.end("boom");
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "recovered" } }] }));
+  });
+
+  try {
+    const model = new OpenAICompatibleModel("test-key", "test-model", baseUrl);
+    const message = await model.complete([{ role: "user", content: "hi" }], []);
+    assert.equal(message.content, "recovered");
+    assert.equal(attempts, 2);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("complete reports an unreachable model server with a hint", async () => {
+  const model = new OpenAICompatibleModel("test-key", "test-model", "http://127.0.0.1:9/v1");
+  await assert.rejects(
+    model.complete([{ role: "user", content: "hi" }], []),
+    /Cannot reach the model API at http:\/\/127\.0\.0\.1:9\/v1\/chat\/completions: .*Is the model server running\?/s,
+  );
+});
+
+test("complete exposes the finish reason so callers can detect truncation", async () => {
+  const { server, baseUrl } = await startServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "cut" }, finish_reason: "length" }] }));
+  });
+
+  try {
+    const model = new OpenAICompatibleModel("test-key", "test-model", baseUrl);
+    const message = await model.complete([{ role: "user", content: "hi" }], []);
+    assert.equal(message.finishReason, "length");
+  } finally {
+    await closeServer(server);
+  }
+});
