@@ -10,6 +10,10 @@ const state = {
   deleteSessionId: null,
   sessionFilter: "",
   toastTimer: null,
+  controller: null,
+  attachment: null,
+  model: "",
+  allowTools: localStorage.getItem("lilpiagent-allow-tools") !== "0",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -66,6 +70,156 @@ function roleLabel(role) {
 function preview(content) {
   const text = String(content || "").replace(/\s+/g, " ").trim();
   return text.length > 150 ? `${text.slice(0, 150)}...` : text || "Empty message";
+}
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function inlineNodes(text) {
+  const nodes = [];
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\s]+\))/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) nodes.push(document.createTextNode(text.slice(cursor, match.index)));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(element("code", "md-inline-code", token.slice(1, -1)));
+    } else if (token.startsWith("**")) {
+      nodes.push(element("strong", null, token.slice(2, -2)));
+    } else if (token.startsWith("*")) {
+      nodes.push(element("em", null, token.slice(1, -1)));
+    } else {
+      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (link && /^https?:\/\//i.test(link[2])) {
+        const anchor = element("a", null, link[1]);
+        anchor.href = link[2];
+        anchor.target = "_blank";
+        anchor.rel = "noreferrer noopener";
+        nodes.push(anchor);
+      } else {
+        nodes.push(document.createTextNode(token));
+      }
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) nodes.push(document.createTextNode(text.slice(cursor)));
+  return nodes;
+}
+
+function codeBlock(code, language) {
+  const wrap = element("div", "md-codeblock");
+  const head = element("div", "md-codeblock-head");
+  head.append(element("span", "md-codeblock-lang", language));
+  const copy = element("button", "md-copy", "Copy");
+  copy.type = "button";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      copy.textContent = "Copied";
+    } catch {
+      copy.textContent = "Failed";
+    }
+    window.setTimeout(() => { copy.textContent = "Copy"; }, 1400);
+  });
+  head.append(copy);
+  const pre = document.createElement("pre");
+  const codeEl = document.createElement("code");
+  codeEl.textContent = code;
+  pre.append(codeEl);
+  wrap.append(head, pre);
+  return wrap;
+}
+
+// Renders the subset of Markdown the model actually emits, always through text nodes
+// so model output can never inject HTML.
+function renderMarkdown(text) {
+  const root = element("div", "md");
+  const lines = String(text).split("\n");
+  let index = 0;
+  let list = null;
+  const closeList = () => { list = null; };
+  while (index < lines.length) {
+    const line = lines[index];
+    const fence = line.match(/^\s*```(\w*)\s*$/);
+    if (fence) {
+      closeList();
+      const body = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+        body.push(lines[index]);
+        index += 1;
+      }
+      index += 1;
+      root.append(codeBlock(body.join("\n"), fence[1] || "text"));
+      continue;
+    }
+    if (/^\s*$/.test(line)) { closeList(); index += 1; continue; }
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) {
+      closeList();
+      const node = document.createElement(`h${Math.min(4, heading[1].length + 2)}`);
+      node.className = "md-heading";
+      node.append(...inlineNodes(heading[2]));
+      root.append(node);
+      index += 1;
+      continue;
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    const ordered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (bullet || ordered) {
+      const kind = bullet ? "ul" : "ol";
+      if (!list || list.kind !== kind) {
+        list = { kind, node: element(kind, "md-list") };
+        root.append(list.node);
+      }
+      const item = document.createElement("li");
+      item.append(...inlineNodes((bullet || ordered)[1]));
+      list.node.append(item);
+      index += 1;
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      closeList();
+      const quote = element("blockquote", "md-quote");
+      quote.append(...inlineNodes(line.replace(/^>\s?/, "")));
+      root.append(quote);
+      index += 1;
+      continue;
+    }
+    closeList();
+    const paragraph = [line];
+    index += 1;
+    while (index < lines.length
+      && !/^\s*$/.test(lines[index])
+      && !/^\s*```/.test(lines[index])
+      && !/^#{1,4}\s/.test(lines[index])
+      && !/^\s*[-*]\s+/.test(lines[index])
+      && !/^\s*\d+[.)]\s+/.test(lines[index])
+      && !/^>\s?/.test(lines[index])) {
+      paragraph.push(lines[index]);
+      index += 1;
+    }
+    const p = element("p", "md-p");
+    p.append(...inlineNodes(paragraph.join(" ")));
+    root.append(p);
+  }
+  return root;
+}
+
+function toolArgsPreview(call) {
+  const raw = call?.function?.arguments;
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    const first = Object.entries(parsed)[0];
+    return first ? `${first[0]}: ${String(first[1]).replace(/\s+/g, " ").slice(0, 70)}` : "";
+  } catch {
+    return String(raw).replace(/\s+/g, " ").slice(0, 70);
+  }
 }
 
 function notify(message) {
@@ -183,8 +337,28 @@ function showEmptyState() {
   const heading = document.createElement("h1");
   heading.textContent = "What can I help with?";
   const copy = document.createElement("p");
-  copy.textContent = "Start a conversation with your agent.";
-  empty.append(icon, heading, copy);
+  copy.textContent = state.model
+    ? `${state.model} is ready. It can read, edit and run code in this workspace.`
+    : "Start a conversation with your agent.";
+  const suggestions = document.createElement("div");
+  suggestions.className = "suggestions";
+  const ideas = [
+    ["Explain this project", "Explain the structure of this project and tell me where to start."],
+    ["Fix a failing test", "Run the test suite and fix whatever fails."],
+    ["Review the README", "Review README.md against the code and list what is wrong or missing."],
+    ["Add a small feature", "Pick one small improvement this project is missing and implement it."],
+  ];
+  for (const [label, prompt] of ideas) {
+    const chip = element("button", "suggestion", label);
+    chip.type = "button";
+    chip.addEventListener("click", () => {
+      inputEl.value = prompt;
+      inputEl.focus();
+      inputEl.dispatchEvent(new Event("input"));
+    });
+    suggestions.append(chip);
+  }
+  empty.append(icon, heading, copy, suggestions);
   messagesEl.append(empty);
 }
 
@@ -204,9 +378,6 @@ function addMessage(role, content = "", tools = []) {
   const label = document.createElement("div");
   label.className = "role-label";
   label.textContent = roleLabel(role);
-  const bubble = document.createElement("div");
-  bubble.className = "message-bubble";
-  bubble.textContent = content;
   const toolList = document.createElement("div");
   toolList.className = "tool-list";
   toolList.setAttribute("aria-label", "Tools used");
@@ -220,12 +391,57 @@ function addMessage(role, content = "", tools = []) {
     }
   };
   setTools(tools);
-  messageContent.append(label, toolList, bubble);
+  const toolLog = element("div", "tool-log");
+  const bubble = element("div", "message-bubble");
+  if (role === "assistant") bubble.classList.add("markdown");
+  const api = { bubble, toolLog, toolRecords: new Map(), setTools };
+  if (role === "assistant") {
+    let frame = 0;
+    api.setText = (text) => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        bubble.replaceChildren(renderMarkdown(text));
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      });
+    };
+    api.notice = (message) => {
+      toolLog.append(element("div", "message-notice", message));
+    };
+    api.addTool = (toolCall) => {
+      const entry = document.createElement("details");
+      entry.className = "tool-entry";
+      const summary = document.createElement("summary");
+      const name = element("span", "tool-entry-name", toolCall?.function?.name || "tool");
+      const hint = element("span", "tool-entry-hint", toolArgsPreview(toolCall));
+      const status = element("span", "tool-entry-status", "running");
+      summary.append(name, hint, status);
+      const output = element("pre", "tool-entry-output", "");
+      entry.append(summary, output);
+      toolLog.append(entry);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      api.toolRecords.set(toolCall?.id, { status, output });
+      return entry;
+    };
+    api.finishTool = (toolCall, result) => {
+      const record = api.toolRecords.get(toolCall?.id);
+      if (!record) return;
+      const text = String(result ?? "");
+      const failed = /^\s*(Tool error|Error)/.test(text);
+      record.status.textContent = failed ? "error" : "done";
+      record.status.classList.toggle("error", failed);
+      record.output.textContent = text.length > 4000 ? `${text.slice(0, 4000)}\n... (${text.length} characters)` : text;
+    };
+    if (content) api.setText(content);
+  } else {
+    bubble.textContent = content;
+  }
+  messageContent.append(label, toolList, toolLog, bubble);
   if (role === "user") row.append(messageContent, avatar);
   else row.append(avatar, messageContent);
   messagesEl.append(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
-  return { bubble, setTools };
+  return api;
 }
 
 function nodePath(nodes, nodeId) {
@@ -313,8 +529,8 @@ async function refreshSessions(select = true) {
     state.nodeId = null;
     state.nodes = [];
     $("session-title").textContent = "No session";
-    $("session-meta").textContent = "Create a session to start";
-    sendEl.disabled = true;
+    $("session-meta").textContent = "Create a session or just start typing";
+    sendEl.disabled = false;
     renderSessions();
     showEmptyState();
     return;
@@ -686,24 +902,81 @@ function exportCurrentSession() {
   notify("Conversation exported.");
 }
 
+function setBusy(busy) {
+  state.busy = busy;
+  sendEl.disabled = busy;
+  sendEl.hidden = busy;
+  $("stop").hidden = !busy;
+  inputEl.setAttribute("aria-busy", String(busy));
+}
+
+function clearAttachment() {
+  state.attachment = null;
+  const holder = $("attachments");
+  holder.replaceChildren();
+  holder.hidden = true;
+}
+
+function renderAttachment() {
+  const holder = $("attachments");
+  holder.replaceChildren();
+  if (!state.attachment) {
+    holder.hidden = true;
+    return;
+  }
+  const chip = element("div", "attachment-chip");
+  chip.append(element("span", "attachment-name", state.attachment.name));
+  const remove = element("button", "attachment-remove", "×");
+  remove.type = "button";
+  remove.setAttribute("aria-label", `Remove ${state.attachment.name}`);
+  remove.addEventListener("click", clearAttachment);
+  chip.append(remove);
+  holder.append(chip);
+  holder.hidden = false;
+}
+
 async function sendMessage(event) {
   event.preventDefault();
   const prompt = inputEl.value.trim();
-  if (!prompt || state.busy || !state.sessionId) return;
-  state.busy = true;
+  if (!prompt || state.busy) return;
+  if (!state.sessionId) {
+    // First message in a fresh browser: create the session on demand instead of making
+    // the user click "New session" before they can type.
+    try {
+      await createSession("");
+      messagesEl.querySelector(".empty-state")?.remove();
+    } catch (error) {
+      $("session-meta").textContent = error instanceof Error ? error.message : String(error);
+      return;
+    }
+  }
+  const attachment = state.attachment;
+  const outgoing = attachment
+    ? `${prompt}\n\n<file name="${attachment.name}">\n${attachment.text}\n</file>`
+    : prompt;
   inputEl.value = "";
   inputEl.style.height = "auto";
-  sendEl.disabled = true;
+  clearAttachment();
+  setBusy(true);
   addMessage("user", prompt);
   const assistantMessage = addMessage("assistant", "");
-  const { bubble, setTools } = assistantMessage;
   const toolNames = [];
-  $("session-meta").textContent = "Thinking...";
+  let streamed = "";
+  let aborted = false;
+  state.controller = new AbortController();
+  $("session-meta").textContent = "Working…";
+  messagesEl.setAttribute("aria-busy", "true");
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: state.sessionId, nodeId: state.nodeId, input: prompt }),
+      body: JSON.stringify({
+        sessionId: state.sessionId,
+        nodeId: state.nodeId,
+        input: outgoing,
+        allowTools: state.allowTools,
+      }),
+      signal: state.controller.signal,
     });
     if (!response.ok || !response.body) throw new Error(await response.text());
     const reader = response.body.getReader();
@@ -720,38 +993,70 @@ async function sendMessage(event) {
         if (!line) continue;
         const data = JSON.parse(line.slice(6));
         if (data.type === "text_delta") {
-          bubble.textContent += data.text;
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-        if (data.type === "tool_start") {
+          streamed += data.text;
+          assistantMessage.setText(streamed);
+        } else if (data.type === "tool_start") {
           const toolName = data.toolCall?.function?.name;
           if (toolName) toolNames.push(toolName);
-          setTools(toolNames);
+          assistantMessage.setTools(toolNames);
+          assistantMessage.addTool(data.toolCall);
+        } else if (data.type === "tool_end") {
+          assistantMessage.finishTool(data.toolCall, data.result);
+          if (typeof data.result === "string" && data.result.startsWith("Tool execution cancelled")) {
+            assistantMessage.notice("This tool needs permission and was denied. Turn on “Run commands” above the input and try again.");
+          }
+        } else if (data.type === "warning") {
+          assistantMessage.notice(data.message);
+        } else if (data.type === "error") {
+          assistantMessage.notice(data.message);
+        } else if (data.type === "aborted") {
+          aborted = true;
+          streamed = data.partial || streamed;
+          assistantMessage.setText(streamed ? `${streamed}\n\n_Stopped._` : "_Stopped._");
+        } else if (data.type === "done") {
+          state.nodeId = data.nodeId;
         }
-        if (data.type === "error") bubble.textContent += `\n${data.message}`;
-        if (data.type === "done") state.nodeId = data.nodeId;
       }
     }
-    await refreshSessions(false);
-    await loadNodes(state.nodeId);
-    $("tool-count").textContent = toolNames.length ? String(toolNames.length) : "None";
-    if (memoryPanel.open) await loadMemories(memoryQueryEl.value.trim());
-    else {
-      state.memoriesLoaded = false;
-      memoryCountEl.textContent = "-";
-    }
-    $("session-meta").textContent = "Ready";
   } catch (error) {
-    bubble.textContent = error instanceof Error ? error.message : String(error);
-    $("session-meta").textContent = "Error";
+    if (error?.name === "AbortError") {
+      aborted = true;
+      assistantMessage.setText(streamed ? `${streamed}\n\n_Stopped._` : "_Stopped._");
+    } else {
+      assistantMessage.setText(`**Request failed.** ${error instanceof Error ? error.message : String(error)}`);
+      $("session-meta").textContent = "Error";
+      notify("The request failed.");
+    }
   } finally {
-    state.busy = false;
-    sendEl.disabled = false;
+    state.controller = null;
+    setBusy(false);
+    messagesEl.setAttribute("aria-busy", "false");
+    $("tool-count").textContent = toolNames.length ? String(new Set(toolNames).size) : "None";
+    if (aborted) {
+      $("session-meta").textContent = "Stopped";
+      refreshSessions(false).catch(() => undefined);
+    } else {
+      $("session-meta").textContent = "Ready";
+      try {
+        await refreshSessions(false);
+        await loadNodes(state.nodeId);
+      } catch { /* keep the streamed transcript on screen */ }
+      if (memoryPanel.open) await loadMemories(memoryQueryEl.value.trim()).catch(() => undefined);
+      else {
+        state.memoriesLoaded = false;
+        memoryCountEl.textContent = "-";
+      }
+    }
     inputEl.focus();
   }
 }
 
 $("composer").addEventListener("submit", sendMessage);
+$("allow-tools").checked = state.allowTools;
+$("allow-tools").addEventListener("change", (event) => {
+  state.allowTools = event.currentTarget.checked;
+  localStorage.setItem("lilpiagent-allow-tools", state.allowTools ? "1" : "0");
+});
 $("new-session").addEventListener("click", openSessionDialog);
 $("refresh").addEventListener("click", () => refreshSessions());
 $("global-search").addEventListener("input", (event) => {
@@ -783,12 +1088,52 @@ $("session-actions").addEventListener("click", (event) => {
 });
 $("export-session").addEventListener("click", () => exportCurrentSession());
 $("context-export").addEventListener("click", () => exportCurrentSession());
-$("attach-file").addEventListener("click", () => $("attachment-input").click());
-$("attachment-input").addEventListener("change", (event) => {
-  const file = event.currentTarget.files?.[0];
-  if (file) notify(`${file.name} attached. Attachments are not yet sent to the agent.`);
-  event.currentTarget.value = "";
+$("stop").addEventListener("click", () => {
+  if (state.controller) {
+    state.controller.abort();
+    $("session-meta").textContent = "Stopping…";
+  }
 });
+$("attach-file").addEventListener("click", () => $("attachment-input").click());
+$("attachment-input").addEventListener("change", async (event) => {
+  const file = event.currentTarget.files?.[0];
+  event.currentTarget.value = "";
+  if (!file) return;
+  if (file.size > 1_000_000) {
+    notify("Files larger than 1 MB are not supported.");
+    return;
+  }
+  const text = await file.text().catch(() => "");
+  if (!text || text.includes("\u0000")) {
+    // Binary attachments would be mangled by a text round-trip; say so instead of
+    // silently sending garbage to the model.
+    notify(`${file.name} looks binary; only text files can be attached.`);
+    return;
+  }
+  state.attachment = { name: file.name, text: text.slice(0, 100_000) };
+  renderAttachment();
+  notify(`${file.name} will be appended to your next message.`);
+});
+function setModelLabel(model, contextLimit) {
+  state.model = model || state.model;
+  if (!state.model) return;
+  for (const id of ["model-name", "composer-model-name", "run-model"]) {
+    const node = $(id);
+    if (node) node.textContent = state.model;
+  }
+  const context = $("run-context");
+  if (context && contextLimit) context.textContent = `${Math.round(contextLimit / 1000)}K tokens`;
+}
+request("/api/health").then((health) => {
+  $("health-dot").classList.toggle("ok", health.ok);
+  $("health-text").textContent = health.memoryAvailable ? "Online · memory on" : "Online · memory off";
+  setModelLabel(health.model, health.contextLimit);
+  if (document.querySelector(".empty-state")) showEmptyState();
+}).catch(() => {
+  $("health-text").textContent = "Offline";
+  $("health-dot").classList.remove("ok");
+});
+
 document.querySelectorAll("[data-panel]").forEach((button) => button.addEventListener("click", () => {
   const panel = button.dataset.panel;
   if (panel === "memory") {
@@ -886,12 +1231,6 @@ inputEl.addEventListener("keydown", (event) => {
   }
 });
 
-request("/api/health").then((health) => {
-  $("health-dot").classList.toggle("ok", health.ok);
-  $("health-text").textContent = health.memoryAvailable ? "Online - Memory on" : "Online - Memory off";
-}).catch(() => {
-  $("health-text").textContent = "Offline";
-});
 refreshSessions().catch((error) => { $("session-meta").textContent = error.message; });
 loadMemories().catch(() => {
   memoryCountEl.textContent = "!";
