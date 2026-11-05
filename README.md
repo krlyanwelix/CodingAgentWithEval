@@ -77,6 +77,7 @@ src/
   index.ts          CLI 入口
   server.ts         Web 入口
 eval/               评测任务、运行器、skill 自进化
+sandbox/            沙箱控制面与数据面（Docker 实现）
 skills/             技能（SKILL.md）
 tools/              外部工具示例
 web/                Web 静态页面
@@ -104,11 +105,44 @@ npm run evolve -- --skill=skills/coding-guide/SKILL.md
 
 任务在 `data/eval/<runId>/<task>/` 的独立沙箱里运行，轨迹追加到 `data/trajectories.jsonl`，可直接作为离线训练样本。
 
+## 沙箱（sandbox/）
+
+控制面与数据面分离：控制面负责生命周期（异步创建、绝对 TTL、暂停/恢复、端点解析），数据面是沙箱内独立进程 `execd`，提供命令执行和文件读写。容器本身是唯一事实来源，元数据只是可重建的缓存。
+
+```text
+sandbox/
+  types.ts          SandboxService 接口与状态类型
+  service.ts        生命周期状态机、绝对 TTL、端点解析
+  docker-runtime.ts Docker 实现
+  control-plane.ts  HTTP 控制面
+  server.ts         控制面入口（默认 :8090）
+  client.ts         控制面 / execd 客户端
+  execd/execd.py    沙箱内数据面（仅标准库）
+  e2e.ts            端到端示例
+```
+
+```sh
+npm run sandbox        # 启动控制面 :8090
+npm run sandbox:e2e    # 起容器 -> 执行命令 -> 文件读写 -> 暂停/恢复 -> 删除
+npm run test:docker    # Docker 生命周期测试（daemon 未启动时自动跳过）
+```
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/sandboxes` | 创建，202 + `Pending` |
+| GET | `/sandboxes/{id}` | 快照 |
+| GET | `/sandboxes/{id}/ready?timeoutMs=` | 等到容器 Running 且 execd 应答 |
+| GET | `/sandboxes/{id}/endpoints/{port}` | 解析端点，带 `X-EXECD-ACCESS-TOKEN` |
+| POST | `/sandboxes/{id}/pause` / `/resume` | 仅 Running / Paused 合法 |
+| DELETE | `/sandboxes/{id}` | 删除 |
+
+Docker 实现相对 OpenSandbox 契约的差异：TTL 由应用侧定时清理；暂停会冻结进程（端口映射保留）；没有快照、出口策略和资源配额；镜像需自带 `python3`（默认 `python:3.12-slim`），`sandbox/execd` 以只读方式挂载到 `/opt/execd`。
+
 ## 开发
 
 ```sh
 npm run build     # tsc
-npm test          # node:test（61 个用例）
+npm test          # node:test（81 个用例；Docker 版另见 npm run test:docker）
 npm start         # 运行编译后的 CLI
 npm run dev:web   # Web 入口
 ```
