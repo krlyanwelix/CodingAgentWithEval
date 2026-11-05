@@ -51,10 +51,12 @@ const sessionStore = new SessionStore(process.env.SESSION_DB ?? "data/agent.sqli
 const mem0 = new Mem0Client({
   baseUrl: process.env.MEM0_URL ?? "http://127.0.0.1:8765",
   userId: process.env.MEMORY_USER_ID ?? "local-user",
-  autoStart: process.env.MEM0_AUTOSTART === "true",
+  autoStart: process.env.MEM0_AUTOSTART !== "false",
 });
 const memoryAvailable = await mem0.start();
-if (!memoryAvailable) console.warn("Mem0 memory is unavailable; the agent will continue without long-term memory.");
+if (!memoryAvailable) {
+  console.warn(`Mem0 memory is unavailable (${mem0.failureReason() ?? "sidecar did not answer"}); continuing without long-term memory.`);
+}
 const terminal = createInterface({ input: stdin, output: stdout });
 
 /** Set while a turn is streaming; Ctrl+C then cancels it instead of exiting. */

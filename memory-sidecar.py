@@ -1,6 +1,7 @@
 import os
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -106,6 +107,19 @@ def instance() -> Memory:
     return memory
 
 
+def with_retries(operation: Callable[[], Any], attempts: int = 3) -> Any:
+    """Embedding and LLM endpoints occasionally drop a TLS handshake; retry briefly."""
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except Exception as error:  # noqa: BLE001 - the API layer reports the final error
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(1 + attempt)
+    raise HTTPException(status_code=502, detail=f"Mem0 backend failed after {attempts} attempts: {last_error}")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok" if memory is not None else "starting"}
@@ -116,12 +130,13 @@ def add(request: AddRequest) -> Any:
     options: dict[str, Any] = {"user_id": request.user_id}
     if request.run_id:
         options["run_id"] = request.run_id
-    return {"result": instance().add([as_dict(item) for item in request.messages], **options)}
+    messages = [as_dict(item) for item in request.messages]
+    return {"result": with_retries(lambda: instance().add(messages, **options))}
 
 
 @app.post("/v1/memories/search")
 def search(request: SearchRequest) -> Any:
-    return instance().search(request.query, filters={"user_id": request.user_id}, top_k=request.limit)
+    return with_retries(lambda: instance().search(request.query, filters={"user_id": request.user_id}, top_k=request.limit))
 
 
 @app.post("/v1/memories/list")

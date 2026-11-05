@@ -59,7 +59,7 @@ MODEL=deepseek-flash
 | `SESSION_DB` | `data/agent.sqlite` | 会话数据库 |
 | `AGENT_TOOLS_DIR` / `AGENT_SKILLS_DIR` | `tools` / `skills` | 外部工具与技能目录 |
 | `MEM0_URL` | `http://127.0.0.1:8765` | 记忆 sidecar 地址 |
-| `MEM0_AUTOSTART` | `false` | 是否自动拉起 sidecar |
+| `MEM0_AUTOSTART` | `true` | 是否自动拉起记忆 sidecar |
 
 ## 目录结构
 
@@ -102,12 +102,16 @@ PORT=8080 npm run dev:web
 
 会话存在 `data/agent.sqlite`，每个 turn 一个节点。启动时选择会话，用 `r<number>` 续聊或 `f<number>` 分叉；Ctrl+C 取消当前步骤，已生成的部分回答仍会保存。
 
-长期记忆由 `memory-sidecar.py`（Mem0 + 内嵌 Qdrant）提供：
+长期记忆由 `memory-sidecar.py`（Mem0 + 内嵌 Qdrant）提供，默认随 CLI / Web 启动时自动拉起：
 
 ```sh
 python -m pip install -r requirements-mem0.txt
-python memory-sidecar.py
+python memory-sidecar.py                      # 手动启动（可选）
 ```
+
+- 依赖 `OPENAI_API_KEY` 做事实抽取，依赖 `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` 做向量化；向量维度要与 `MEM0_EMBEDDING_DIMS`（默认 2048）一致，换模型时删掉 `data/mem0-qdrant` 重建索引。
+- sidecar 的 stdout/stderr 写入 `data/mem0-sidecar.log`；`/api/health` 里的 `memoryAvailable` 会在首次失败后动态重试，`memoryError` 给出最近一次失败原因。
+- 设 `MEM0_AUTOSTART=false` 可以完全关掉记忆功能。
 
 ## 评测
 
