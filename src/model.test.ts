@@ -132,7 +132,7 @@ test("idle timeout aborts a stream that stops producing data", async () => {
   }
 });
 
-test("extra body fields are sent and reasoning deltas stay out of the answer", async () => {
+test("sampling fields are sent and reasoning deltas stay out of the answer", async () => {
   let received: Record<string, unknown> = {};
   const { server, baseUrl } = await startServer((request, response) => {
     let raw = "";
@@ -153,14 +153,12 @@ test("extra body fields are sent and reasoning deltas stay out of the answer", a
       "k",
       "m",
       baseUrl,
-      { chat_template_kwargs: { enable_thinking: false } },
       { maxTokens: 512, temperature: 0.2, topP: 0.8 },
     );
     let text = "";
     for await (const event of model.stream([{ role: "user", content: "hi" }])) {
       if (event.type === "text_delta") text += event.text;
     }
-    assert.deepEqual(received.chat_template_kwargs, { enable_thinking: false });
     assert.equal(received.model, "m");
     assert.equal(received.max_tokens, 512);
     assert.equal(received.temperature, 0.2);

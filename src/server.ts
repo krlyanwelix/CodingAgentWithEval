@@ -8,7 +8,7 @@ import { tools as builtinTools } from "./tools.js";
 import { SessionStore } from "./session-store.js";
 import { createSkillLoaderTool, discoverSkills, loadExternalTools } from "./loader.js";
 import { Mem0Client, type Mem0Memory } from "./mem0-client.js";
-import type { AgentEvent, Message, ToolCall } from "./types.js";
+import type { Message, ToolCall } from "./types.js";
 import { buildSystemPrompt } from "./prompt.js";
 
 const projectRoot = resolve(process.cwd());

@@ -44,8 +44,8 @@ export interface ModelRequestOptions {
 }
 
 /**
- * Sampling parameters sent with every request. Small local models need an
- * explicit cap and a low temperature or they ramble and repeat themselves.
+ * Sampling parameters sent with every request. An explicit cap and a low
+ * temperature keep tool calls short and steady.
  */
 export interface SamplingOptions {
   maxTokens?: number;

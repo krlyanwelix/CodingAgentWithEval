@@ -9,7 +9,7 @@ export interface ModelSettings {
   timeoutMs: number;
   /** Abort a stream that stops producing bytes for this long. */
   streamIdleTimeoutMs: number;
-  /** Sent with every request so a small model cannot ramble or run on. */
+  /** Sent with every request so the model cannot ramble or run on. */
   sampling: SamplingOptions;
 }
 
@@ -62,7 +62,7 @@ export function describeModel(settings: ModelSettings): string {
 export function createModel(env: NodeJS.ProcessEnv = process.env): { model: Model; settings: ModelSettings } {
   const settings = readModelSettings(env);
   return {
-    model: new OpenAICompatibleModel(settings.apiKey, settings.model, settings.baseUrl, {}, settings.sampling),
+    model: new OpenAICompatibleModel(settings.apiKey, settings.model, settings.baseUrl, settings.sampling),
     settings,
   };
 }

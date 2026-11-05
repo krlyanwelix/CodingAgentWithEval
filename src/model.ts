@@ -76,16 +76,13 @@ export class OpenAICompatibleModel implements Model {
     private readonly apiKey: string,
     private readonly modelName: string,
     private readonly baseUrl = "https://api.openai.com/v1",
-    /** Provider-specific fields merged into every chat-completions body. */
-    private readonly extraBody: Record<string, unknown> = {},
-    /** Sampling defaults; extraBody still wins when it sets the same key. */
+    /** Sampling defaults sent with every request. */
     private readonly sampling: SamplingOptions = {},
   ) {}
 
   private body(messages: Message[], tools: ToolDefinition[] = [], stream: boolean): string {
     return JSON.stringify({
       ...this.samplingBody(),
-      ...this.extraBody,
       model: this.modelName,
       messages: sanitizeMessages(messages),
       ...(tools.length > 0

@@ -1,8 +1,8 @@
 import type { SkillSummary } from "./loader.js";
 
 /**
- * The behaviour contract for a small local model. A capable model can infer most
- * of this; a 9B model cannot, so the rules are explicit and short.
+ * The behaviour contract given to the model. A capable model infers most of
+ * this; spelling it out keeps small and large models on the same rails.
  */
 export function buildSystemPrompt(modelName: string, skills: SkillSummary[]): string {
   const skillBlock =
@@ -12,7 +12,7 @@ export function buildSystemPrompt(modelName: string, skills: SkillSummary[]): st
           .join("\n")}\n`
       : "";
 
-  return `You are LilPiAgent, a coding assistant running locally on ${modelName}.
+  return `You are LilPiAgent, a coding assistant powered by ${modelName}.
 
 How to work:
 - Never guess a path. If you do not know what exists, list the directory first with bash (\`ls\`), then read the file.
@@ -29,7 +29,7 @@ Answer style: concise, at most 5 lines unless the user asks for detail. Answer i
 Example:
 user: change the title in README.md to "LilPiAgent"
 assistant: (tool call) read {"path": "README.md"}
-tool: 1: # myAgent ...
+tool: 1: # LilPiAgent ...
 assistant: (tool call) edit {"path": "README.md", "oldText": "# myAgent", "newText": "# LilPiAgent"}
 tool: File edited: README.md
 assistant: Done: the title in README.md is now "# LilPiAgent".

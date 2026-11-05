@@ -1,11 +1,11 @@
-﻿import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Agent } from "../src/agent.js";
 import { setWorkspaceRoot, tools } from "../src/tools.js";
 import { createModel, describeModel } from "../src/model-config.js";
 import { buildSystemPrompt } from "../src/prompt.js";
 import type { Message } from "../src/types.js";
-import { evalTasks, selectTasks, type EvalTask } from "./tasks.js";
+import { selectTasks, type EvalTask } from "./tasks.js";
 
 export interface TaskResult {
   id: string;
@@ -244,11 +244,5 @@ async function main(): Promise<void> {
 if (process.argv[1] && resolve(process.argv[1]) === resolve("eval/run.ts")) {
   await main();
 }
-
-// keep the import used for type clarity in editors that strip unused imports
-export type { EvalTask };
-void evalTasks;
-void existsSync;
-void tools;
 
 

@@ -69,8 +69,8 @@ export class Agent {
   constructor(private readonly options: AgentOptions) {
     this.toolByName = new Map(options.tools.map((tool) => [tool.definition.name, tool]));
     this.toolDefinitions = options.tools.map((tool) => tool.definition);
-    // A local 9B model needs a few extra turns to explore; the repeat guard
-    // below stops runaway loops instead of a low turn cap.
+    // Enough turns for real exploration; the repeat and failure guards below
+    // stop runaway loops instead of a low turn cap.
     this.maxTurns = options.maxTurns ?? 20;
     this.messages = [{ role: "system", content: options.systemPrompt }, ...(options.history ?? [])];
     this.contextOptions = { ...DEFAULT_CONTEXT_OPTIONS, ...(options.context ?? {}) };

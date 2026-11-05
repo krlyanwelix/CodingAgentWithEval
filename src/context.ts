@@ -40,10 +40,6 @@ export const DEFAULT_CONTEXT_OPTIONS: ContextOptions = {
   toolResultTailChars: 1000,
 };
 
-const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
-
-
-
 export function estimateMessageTokens(message: Message): number {
   let tokens = 8 + estimateTokens(message.content);
   if (message.tool_calls) {
