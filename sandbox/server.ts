@@ -11,20 +11,20 @@ import { FileMetadataStore } from "./metadata.js";
 import { LifecycleService } from "./service.js";
 
 const port = Number(process.env.SANDBOX_PORT ?? 8090);
-const runtime = new DockerRuntime({ execdDir: resolve("sandbox/execd") });
+const image = process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local";
+const runtime = new DockerRuntime();
 const metadata = new FileMetadataStore(resolve("data/sandboxes.json"));
 const service = new LifecycleService({
   runtime,
   metadata,
-  defaultImage: process.env.SANDBOX_IMAGE ?? "python:3.12-slim",
-  execdCommand: ["python3", "/opt/execd/execd.py"],
+  defaultImage: image,
   defaultTtlSeconds: Number(process.env.SANDBOX_TTL_SECONDS ?? 600),
 });
 
 const server = createControlPlane(service);
 server.listen(port, "127.0.0.1", () => {
   console.log(`sandbox control plane listening on http://127.0.0.1:${port}`);
-  console.log(`runtime=${runtime.name} image=${process.env.SANDBOX_IMAGE ?? "python:3.12-slim"}`);
+  console.log(`runtime=${runtime.name} image=${image}`);
 });
 
 function shutdown(): void {

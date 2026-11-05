@@ -11,6 +11,7 @@
     "start:web": "node dist/server.js",
     "test": "node --import tsx --test src/context.test.ts src/session-store.test.ts src/agent.test.ts src/model.test.ts src/model-config.test.ts src/tools.test.ts eval/proposal.test.ts sandbox/service.test.ts sandbox/control-plane.test.ts sandbox/execd.test.ts",
     "test:docker": "node --import tsx --test sandbox/docker-runtime.test.ts",
+    "sandbox:image": "docker build -t lilpi-sandbox:local sandbox/execd",
     "sandbox": "tsx sandbox/server.ts",
     "sandbox:e2e": "tsx sandbox/e2e.ts",
     "eval": "node --env-file=.env --import tsx eval/run.ts",

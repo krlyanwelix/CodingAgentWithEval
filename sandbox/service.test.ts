@@ -171,7 +171,7 @@ test("list adopts workloads that exist only in the backend", async () => {
     id: "sbx-orphan",
     phase: "running",
     token: "orphan-token",
-    image: "python:3.12-slim",
+    image: "lilpi-sandbox:local",
     labels: {
       "lilpi.sandbox.created": String(Date.now()),
       "lilpi.sandbox.expires": String(Date.now() + 60_000),

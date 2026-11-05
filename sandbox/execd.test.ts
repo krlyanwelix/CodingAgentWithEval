@@ -1,61 +1,80 @@
+/**
+ * Data-plane protocol tests against the real runtime image.
+ *
+ * The Go execd runs inside the container — that is the shipping shape, so the
+ * tests exercise exactly what the sandbox uses. Requires Docker and the
+ * lilpi-sandbox:local image (`npm run sandbox:image`).
+ */
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import test, { after, before } from "node:test";
 import { ExecdClient } from "./client.js";
 
+const execFileAsync = promisify(execFile);
 const token = "execd-test-token";
-let child: ChildProcessWithoutNullStreams | undefined;
+const image = process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local";
+const container = `lilpi-execd-test-${process.pid}`;
 let client: ExecdClient | undefined;
-let root = "";
 let startFailure = "";
 
+async function docker(args: string[], timeoutMs = 120_000): Promise<string> {
+  const { stdout } = await execFileAsync("docker", args, { timeout: timeoutMs, windowsHide: true });
+  return stdout.trim();
+}
+
 before(async () => {
-  root = mkdtempSync(join(tmpdir(), "lilpi-execd-"));
-  const python = process.env.PYTHON ?? "python";
-  child = spawn(python, [resolve("sandbox/execd/execd.py")], {
-    env: {
-      ...process.env,
-      EXECD_ACCESS_TOKEN: token,
-      EXECD_ROOT: root,
-      EXECD_PORT: "0",
-      EXECD_HOST: "127.0.0.1",
-    },
-  });
-
-  const port = await new Promise<number | undefined>((resolvePort) => {
-    const timer = setTimeout(() => resolvePort(undefined), 10_000);
-    const finish = (value: number | undefined): void => {
-      clearTimeout(timer);
-      resolvePort(value);
-    };
-    child?.stdout.on("data", (chunk: Buffer) => {
-      const match = /execd listening on [^:]+:(\d+)/.exec(chunk.toString());
-      if (match) finish(Number(match[1]));
-    });
-    child?.on("error", (error) => {
-      startFailure = `spawn ${python}: ${error.message}`;
-      finish(undefined);
-    });
-    child?.on("exit", (code) => {
-      startFailure = `execd exited with ${code}`;
-      finish(undefined);
-    });
-  });
-
-  if (port === undefined) {
-    if (!startFailure) startFailure = "execd did not report a port";
+  try {
+    await docker(["image", "inspect", image], 30_000);
+  } catch {
+    startFailure = `image ${image} is missing; build it with: npm run sandbox:image`;
     return;
   }
-  client = new ExecdClient({ port: 8765, url: `http://127.0.0.1:${port}`, headers: { "X-EXECD-ACCESS-TOKEN": token } });
+  try {
+    await docker([
+      "run",
+      "-d",
+      "--rm",
+      "--name",
+      container,
+      "-p",
+      "127.0.0.1::8765",
+      "-e",
+      `EXECD_ACCESS_TOKEN=${token}`,
+      image,
+    ]);
+  } catch (error) {
+    startFailure = `docker run failed: ${String(error)}`;
+    return;
+  }
+
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const mapping = await docker(["port", container, "8765/tcp"], 15_000).catch(() => "");
+    const port = /:(\d+)\s*$/m.exec(mapping ?? "")?.[1];
+    if (port) {
+      const candidate = new ExecdClient({
+        port: 8765,
+        url: `http://127.0.0.1:${port}`,
+        headers: { "X-EXECD-ACCESS-TOKEN": token },
+      });
+      try {
+        if ((await candidate.ping()).ok) {
+          client = candidate;
+          return;
+        }
+      } catch {
+        // Keep polling until execd starts listening.
+      }
+    }
+    await new Promise((resolveSleep) => setTimeout(resolveSleep, 300));
+  }
+  startFailure = "execd did not answer on the published port within 30s";
 });
 
-after(() => {
-  child?.kill();
-  if (root) rmSync(root, { recursive: true, force: true });
+after(async () => {
+  await docker(["rm", "-f", container], 30_000).catch(() => undefined);
 });
 
 function requireClient(t: { skip: (reason: string) => void }): ExecdClient {
@@ -67,14 +86,12 @@ function requireClient(t: { skip: (reason: string) => void }): ExecdClient {
 }
 
 test("execd rejects requests without the access token", async (t) => {
-  requireClient(t);
-  const base = client!.url;
-  const unauthorized = await fetch(`${base}/ping`);
+  const execd = requireClient(t);
+  const unauthorized = await fetch(`${execd.url}/ping`);
   assert.equal(unauthorized.status, 401);
-  const wrong = await fetch(`${base}/ping`, { headers: { "X-EXECD-ACCESS-TOKEN": "wrong" } });
+  const wrong = await fetch(`${execd.url}/ping`, { headers: { "X-EXECD-ACCESS-TOKEN": "wrong" } });
   assert.equal(wrong.status, 401);
-  const ping = await client!.ping();
-  assert.equal(ping.ok, true);
+  assert.equal((await execd.ping()).ok, true);
 });
 
 test("POST /command streams stdout and reports the exit code", async (t) => {
@@ -86,17 +103,15 @@ test("POST /command streams stdout and reports the exit code", async (t) => {
 
 test("POST /command reports non-zero exit codes", async (t) => {
   const execd = requireClient(t);
-  const result = await execd.run("exit 3");
-  assert.equal(result.exitCode, 3);
+  assert.equal((await execd.run("exit 3")).exitCode, 3);
 });
 
 test("POST /command kills the process when it times out", async (t) => {
   const execd = requireClient(t);
-  const command = process.platform === "win32" ? "ping -n 4 127.0.0.1" : "sleep 3";
   const started = Date.now();
-  const result = await execd.run(command, { timeoutMs: 300 });
+  const result = await execd.run("sleep 3", { timeoutMs: 300 });
   assert.notEqual(result.exitCode, 0);
-  assert.ok(Date.now() - started < 5_000);
+  assert.ok(Date.now() - started < 5_000, "the command should be killed, not waited out");
 });
 
 test("files: write, read back and list the workspace", async (t) => {
@@ -113,4 +128,13 @@ test("files: paths escaping the sandbox root are rejected", async (t) => {
   const execd = requireClient(t);
   await assert.rejects(() => execd.writeFile("../escape.txt", "nope"), /escapes the sandbox root/);
   await assert.rejects(() => execd.readFile("/etc/passwd"), /escapes the sandbox root/);
+});
+
+test("files: non-UTF-8 content needs base64", async (t) => {
+  const execd = requireClient(t);
+  const binary = Buffer.from([0xff, 0xfe, 0x00, 0x01]).toString("base64");
+  await execd.writeFile("blob.bin", binary, "base64");
+  await assert.rejects(() => execd.readFile("blob.bin"), /not valid UTF-8/);
+  const decoded = await execd.readFile("blob.bin", "base64");
+  assert.equal(decoded.content, binary);
 });

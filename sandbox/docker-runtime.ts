@@ -8,7 +8,7 @@
  * Docker compromises documented in sandbox/README.md:
  * - pause/resume is `docker pause`/`unpause` (freeze, not a memory snapshot);
  * - endpoints are loopback port mappings (`127.0.0.1:<random>`);
- * - the execd data plane is bind-mounted from the host into the container.
+ * - execd is baked into the runtime image by default (no bind mount).
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,8 +23,12 @@ import {
 const execFileAsync = promisify(execFile);
 
 export interface DockerRuntimeOptions {
-  /** Host directory that contains execd.py; mounted read-only into /opt/execd. */
-  execdDir: string;
+  /**
+   * Optional host directory with an execd binary to bind-mount at /opt/execd.
+   * The default `lilpi-sandbox:local` image already contains execd, so this
+   * exists only for iterating on execd without rebuilding the image.
+   */
+  execdDir?: string;
   dockerBin?: string;
   /** Command timeout for Docker CLI calls. */
   commandTimeoutMs?: number;
@@ -57,12 +61,12 @@ function phaseOf(status: string | undefined): RuntimeSandbox["phase"] | undefine
 export class DockerRuntime implements SandboxService {
   readonly name = "docker";
   private readonly bin: string;
-  private readonly execdDir: string;
+  private readonly execdDir?: string;
   private readonly commandTimeoutMs: number;
 
-  constructor(options: DockerRuntimeOptions) {
+  constructor(options: DockerRuntimeOptions = {}) {
     this.bin = options.dockerBin ?? process.env.DOCKER_BIN ?? "docker";
-    this.execdDir = options.execdDir.replace(/\\/g, "/");
+    this.execdDir = options.execdDir?.replace(/\\/g, "/");
     this.commandTimeoutMs = options.commandTimeoutMs ?? 120_000;
   }
 
@@ -91,8 +95,9 @@ export class DockerRuntime implements SandboxService {
         .filter(([key]) => !key.startsWith("EXECD_"))
         .flatMap(([key, value]) => ["--env", `${key}=${value}`]),
       ...ports.flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
-      "--mount",
-      `type=bind,source=${this.execdDir},target=/opt/execd,readonly`,
+      ...(this.execdDir
+        ? ["--mount", `type=bind,source=${this.execdDir},target=/opt/execd,readonly`]
+        : []),
       "--workdir",
       "/workspace",
       sandbox.image,

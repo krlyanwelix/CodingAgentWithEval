@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
 import test from "node:test";
 import { ExecdClient } from "./client.js";
 import { DockerRuntime } from "./docker-runtime.js";
 import { MemoryMetadataStore } from "./metadata.js";
 import { LifecycleService } from "./service.js";
 
-const runtime = new DockerRuntime({ execdDir: resolve("sandbox/execd") });
+const runtime = new DockerRuntime();
 const dockerAvailable = await runtime.available();
 
 test(
@@ -16,8 +15,7 @@ test(
     const service = new LifecycleService({
       runtime,
       metadata: new MemoryMetadataStore(),
-      defaultImage: process.env.SANDBOX_IMAGE ?? "python:3.12-slim",
-      execdCommand: ["python3", "/opt/execd/execd.py"],
+      defaultImage: process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local",
       defaultTtlSeconds: 180,
       ttlSweepMs: 60_000,
     });

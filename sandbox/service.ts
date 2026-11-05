@@ -47,7 +47,7 @@ interface StateEntry {
   error?: string;
 }
 
-const DEFAULT_IMAGE = "python:3.12-slim";
+const DEFAULT_IMAGE = "lilpi-sandbox:local";
 const DEFAULT_TTL_SECONDS = 600;
 
 /** Ready means the agent can run commands: execd answers /ping with the token. */
@@ -93,7 +93,7 @@ export class LifecycleService {
     this.runtime = options.runtime;
     this.metadata = options.metadata;
     this.defaultImage = options.defaultImage ?? DEFAULT_IMAGE;
-    this.execdCommand = options.execdCommand ?? ["python3", "/opt/execd/execd.py"];
+    this.execdCommand = options.execdCommand ?? [];
     this.defaultTtlSeconds = options.defaultTtlSeconds ?? DEFAULT_TTL_SECONDS;
     this.clock = options.clock ?? Date.now;
     this.dataPlaneProbe = options.dataPlaneProbe ?? pingEndpoint;

@@ -117,11 +117,13 @@ sandbox/
   control-plane.ts  HTTP 控制面
   server.ts         控制面入口（默认 :8090）
   client.ts         控制面 / execd 客户端
-  execd/execd.py    沙箱内数据面（仅标准库）
+  execd/main.go     沙箱内数据面（Go，静态编译）
+  execd/Dockerfile  运行时镜像（alpine + busybox sh）
   e2e.ts            端到端示例
 ```
 
 ```sh
+npm run sandbox:image  # 构建 lilpi-sandbox:local（约 20MB）
 npm run sandbox        # 启动控制面 :8090
 npm run sandbox:e2e    # 起容器 -> 执行命令 -> 文件读写 -> 暂停/恢复 -> 删除
 npm run test:docker    # Docker 生命周期测试（daemon 未启动时自动跳过）
@@ -136,13 +138,13 @@ npm run test:docker    # Docker 生命周期测试（daemon 未启动时自动�
 | POST | `/sandboxes/{id}/pause` / `/resume` | 仅 Running / Paused 合法 |
 | DELETE | `/sandboxes/{id}` | 删除 |
 
-Docker 实现相对 OpenSandbox 契约的差异：TTL 由应用侧定时清理；暂停会冻结进程（端口映射保留）；没有快照、出口策略和资源配额；镜像需自带 `python3`（默认 `python:3.12-slim`），`sandbox/execd` 以只读方式挂载到 `/opt/execd`。
+Docker 实现相对 OpenSandbox 契约的差异：TTL 由应用侧定时清理；暂停会冻结进程（端口映射保留）；没有快照、出口策略和资源配额；镜像为 `lilpi-sandbox:local`（alpine + 静态编译的 Go execd，约 20MB），命令通过 busybox `sh -c` 执行，镜像内没有 Python/Node。
 
 ## 开发
 
 ```sh
 npm run build     # tsc
-npm test          # node:test（81 个用例；Docker 版另见 npm run test:docker）
+npm test          # node:test（82 个用例；Docker 版另见 npm run test:docker）
 npm start         # 运行编译后的 CLI
 npm run dev:web   # Web 入口
 ```

@@ -3,13 +3,12 @@
  *
  * Self-contained: starts the control plane in-process on an ephemeral port and
  * uses the real Docker runtime. Requires a running Docker daemon and the
- * python:3.12-slim image (pulled automatically on first use).
+ * lilpi-sandbox:local image (`npm run sandbox:image`).
  *
  *   npm run sandbox:e2e
  */
 import "dotenv/config";
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 import { ControlPlaneClient, ExecdClient } from "./client.js";
 import { createControlPlane } from "./control-plane.js";
@@ -21,7 +20,7 @@ const started = Date.now();
 const stamp = (): string => `${((Date.now() - started) / 1000).toFixed(1)}s`;
 
 async function main(): Promise<void> {
-  const runtime = new DockerRuntime({ execdDir: resolve("sandbox/execd") });
+  const runtime = new DockerRuntime();
   if (!(await runtime.available())) {
     console.error("Docker daemon is not reachable (start Docker Desktop first).");
     process.exit(1);
@@ -30,8 +29,7 @@ async function main(): Promise<void> {
   const service = new LifecycleService({
     runtime,
     metadata: new MemoryMetadataStore(),
-    defaultImage: process.env.SANDBOX_IMAGE ?? "python:3.12-slim",
-    execdCommand: ["python3", "/opt/execd/execd.py"],
+    defaultImage: process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local",
     defaultTtlSeconds: 180,
     ttlSweepMs: 60_000,
   });
