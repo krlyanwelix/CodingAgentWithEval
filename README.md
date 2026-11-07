@@ -1,4 +1,4 @@
-# LilPiAgent
+# CodingAgentWithEval
 
 一个极简的 TypeScript coding agent，只做一件事：
 
@@ -13,7 +13,10 @@
 - **Agent 循环**：流式输出、同一轮并行调用多个工具、20 轮上限优雅收尾、完全重复的调用直接拦截、连续失败自动收敛。
 - **上下文管理**：按轮切分历史，超预算时把早期轮次压成摘要；长工具结果截断，完整内容落 `data/tool-output/`。
 - **会话树**（SQLite）：从任意 turn 续聊或分叉（`r<number>` / `f<number>`），崩溃留下的未完成 turn 自动收尾。
-- **内置工具**：`read` / `write` / `edit` / `bash`；路径经真实路径校验防逃逸；Windows 自动探测 Git Bash；超时与输出上限保护。
+- **内置工具**：`read` / `write` / `edit` / `glob` / `grep` / `bash`；路径经真实路径校验防逃逸；Windows 自动探测 Git Bash；超时与输出上限保护。
+- **约束层**：`src/harness/policy.ts` 解析每条命令的能力（读/写/shell/网络/git 写）与风险，危险命令先拦再问；能力可在 `.env` 里按需授予。
+- **验证层**：结束前跑配置好的检查命令（测试、lint、类型检查），失败就把结果回灌给模型继续修，最多 N 次——完成判定看结构化事实，不看模型自称。
+- **可观测**：每条轨迹可落 JSONL（`TRACE_DIR`），包含模型调用、工具批次、状态栏与验证结果；工具结果末尾的 `[harness]` 状态行让模型自己看到轮数、连续失败与上下文余量。
 - **扩展**：技能 `skills/**/SKILL.md` 渐进式加载，外部工具放 `tools/`，Mem0 长期记忆（可选）。
 - **双入口**：命令行 REPL 与轻量 Web（SSE 流式，Markdown 渲染、工具调用折叠、随时停止）。
 - **评测**：17 个任务（含 1 个 holdout），沙箱执行、自动判分、轨迹落 JSONL；`eval/evolve.ts` 支持 skill 自进化。
@@ -58,6 +61,16 @@ MODEL=deepseek-flash
 | `GIT_BASH_PATH` | 自动 | 自动探测不准时指定 bash.exe |
 | `SESSION_DB` | `data/agent.sqlite` | 会话数据库 |
 | `AGENT_TOOLS_DIR` / `AGENT_SKILLS_DIR` | `tools` / `skills` | 外部工具与技能目录 |
+| `AGENT_CAPABILITIES` | 全部 | 逗号分隔的能力白名单：`fs.read,fs.write,shell,network,git.write` |
+| `AGENT_AUTO_APPROVE_RISK` | `never` | 自动放行的最高风险：`low` / `medium` / `high` |
+| `AGENT_STATUS_BAR` | `true` | 是否在工具结果末尾追加 `[harness]` 状态行 |
+| `AGENT_VERIFY_CHECKS` | 空 | 验证命令，`;;` 分隔的 `name=command`，如 `test=npm test;;lint=npx eslint .` |
+| `AGENT_VERIFY_ATTEMPTS` | `1` | 验证失败后最多回灌几次 |
+| `TRACE_DIR` | 空（关闭） | 轨迹 JSONL 输出目录；`TRACE_ENABLED=0` 显式关闭 |
+| `JUDGE_API_KEY` | 空（关闭 judge） | LLM-as-judge 密钥 |
+| `JUDGE_BASE_URL` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | judge 接口地址 |
+| `JUDGE_MODEL` | `qwen3.8-flash` | judge 模型名 |
+| `JUDGE_SAMPLES` | `3` | judge 采样数（1–5），按 criterion 多数票合并 |
 | `MEM0_URL` | `http://127.0.0.1:8765` | 记忆 sidecar 地址 |
 | `MEM0_AUTOSTART` | `true` | 是否自动拉起记忆 sidecar |
 
@@ -68,7 +81,14 @@ src/
   agent.ts          循环：模型 -> 工具 -> 模型，多轮控制
   model.ts          OpenAI 兼容客户端（流式、重试、超时）
   model-config.ts   .env 解析
-  tools.ts          read / write / edit / bash
+  tools.ts          read / write / edit / glob / grep / bash
+  harness/          约束、验证、状态栏、错误分类、轨迹记录
+    policy.ts       命令能力与风险分级
+    verify.ts       验证命令执行
+    status.ts       状态行
+    errors.ts       工具错误分类
+    trace.ts        轨迹 JSONL
+    config.ts       .env 解析
   context.ts        token 估算、历史压缩、工具结果截断
   tokens.ts         token 估算工具函数
   session-store.ts  SQLite 会话树
@@ -76,7 +96,16 @@ src/
   prompt.ts         给模型的行为契约
   index.ts          CLI 入口
   server.ts         Web 入口
-eval/               评测任务、运行器、skill 自进化
+eval/
+  tasks.ts          任务定义与 L0 断言
+  runner.ts         执行、三层判定、指标聚合
+  verifiers.ts      L1 diff 规则与 rubric
+  judge.ts          LLM-as-judge 客户端（证据校验、并行采样）
+  diff.ts           seed 与工作区的 diff
+  report.ts         Markdown 报告
+  run.ts            CLI
+  calibrate.ts      judge 校准（Cohen's κ）
+  evolve.ts         skill 自进化
 sandbox/            沙箱控制面与数据面（Docker 实现）
 skills/             技能（SKILL.md）
 tools/              外部工具示例
@@ -115,14 +144,29 @@ python memory-sidecar.py                      # 手动启动（可选）
 
 ## 评测
 
+每个任务在 `data/eval/<runId>/<task>-<attempt>/` 的独立沙箱里跑，seed 先写入，跑完做三层判定：
+
+| 层 | 输入 | 作用 | 是否 gate |
+| --- | --- | --- | --- |
+| L0 任务断言 | 工作区 + 最终答复 | 测试通过、文件内容正确 | 是 |
+| L1 diff 规则 | seed 与工作区 diff | 测试文件未被改、无密钥泄漏、改动可观察、答复非空 | 是 |
+| L2 LLM-as-judge | diff + 验证输出 + 最终答复 | 只判断言够不着的维度（是否答非所问、最小改动、答复与改动一致） | 可选（`--gate-judge`） |
+
+judge 只看产物，不看思维链；每条判定必须给出 `file:lines` + 原文引用，引用在产物里找不到就作废。采样 `JUDGE_SAMPLES` 次按 criterion 多数票合并，`must` 项全过且加权分 ≥ 0.75 才算通过。
+
 ```powershell
-npm run eval                                  # 常规任务，默认每题跑 3 遍取多数
-npm run eval -- --tasks=bugfix-duration       # 只跑一个任务
-npm run eval -- --tasks=holdout               # 只跑隐藏任务
+npm run eval                                   # 全部常规任务，默认每题 3 遍
+npm run eval -- --tasks=bugfix-duration --repeat 1
+npm run eval -- --tasks=holdout --no-judge     # 只跑隐藏任务、不调 judge
+npm run eval -- --gate-judge                   # judge 参与通过判定（校准后再开）
+npm run eval:judge                             # judge 连通性冒烟
+npm run eval:calibrate                         # 与 L0/L1 结果比对，算 Cohen's κ
 npm run evolve -- --skill=skills/coding-guide/SKILL.md
 ```
 
-任务在 `data/eval/<runId>/<task>/` 的独立沙箱里运行，轨迹追加到 `data/trajectories.jsonl`，可直接作为离线训练样本。
+指标：Pass@1、Pass@k（任一 attempt 过）、Pass^k（全部 attempt 过）、多数票通过率、平均 reward、agent/judge token 成本、首错归因（harness / provider / 模型 / 规则）。报告写到 `data/eval-reports/<runId>.md`，逐条轨迹追加到 `data/trajectories.jsonl`。
+
+**开放 `--gate-judge` 之前先校准**：跑 `npm run eval:calibrate`，κ ≥ 0.7 再让 judge 进 gate，否则它只计分不拦人。
 
 ## 沙箱（sandbox/）
 
@@ -142,7 +186,7 @@ sandbox/
 ```
 
 ```sh
-npm run sandbox:image  # 构建 lilpi-sandbox:local（约 20MB）
+npm run sandbox:image  # 构建 codingagentwitheval-sandbox:local（约 20MB）
 npm run sandbox        # 启动控制面 :8090
 npm run sandbox:e2e    # 起容器 -> 执行命令 -> 文件读写 -> 暂停/恢复 -> 删除
 npm run test:docker    # Docker 生命周期测试（daemon 未启动时自动跳过）
@@ -157,13 +201,14 @@ npm run test:docker    # Docker 生命周期测试（daemon 未启动时自动�
 | POST | `/sandboxes/{id}/pause` / `/resume` | 仅 Running / Paused 合法 |
 | DELETE | `/sandboxes/{id}` | 删除 |
 
-Docker 实现相对 OpenSandbox 契约的差异：TTL 由应用侧定时清理；暂停会冻结进程（端口映射保留）；没有快照、出口策略和资源配额；镜像为 `lilpi-sandbox:local`（alpine + 静态编译的 Go execd，约 20MB），命令通过 busybox `sh -c` 执行，镜像内没有 Python/Node。
+Docker 实现相对 OpenSandbox 契约的差异：TTL 由应用侧定时清理；暂停会冻结进程（端口映射保留）；没有快照、出口策略和资源配额；镜像为 `codingagentwitheval-sandbox:local`（alpine + 静态编译的 Go execd，约 20MB），命令通过 busybox `sh -c` 执行，镜像内没有 Python/Node。
 
 ## 开发
 
 ```sh
 npm run build     # tsc
-npm test          # node:test（82 个用例；Docker 版另见 npm run test:docker）
+npm run typecheck # tsc，覆盖 src/ 与 eval/
+npm test          # node:test（含 eval/verifiers、eval/judge；Docker 版另见 npm run test:docker）
 npm start         # 运行编译后的 CLI
 npm run dev:web   # Web 入口
 ```
@@ -173,4 +218,7 @@ npm run dev:web   # Web 入口
 - Web 端没有鉴权，默认只监听 `127.0.0.1`；对外暴露前请自行加一层反向代理与访问控制。
 - 一个会话同时只允许一个请求在跑，第二个请求会覆盖当前 turn 的父节点。
 - 附件只支持文本；图片、PDF 等二进制文件会被拒绝。
+- judge 单次调用约 1–2s，但每题默认 3 采样；大规模跑评测建议先用 `--judge-samples 1` 调通，再全量。
+- judge 与主模型不同家族（qwen3 vs deepseek），减少同源偏好；换 judge 模型要重跑校准。
+- 评测沙箱是目录隔离（`setWorkspaceRoot` + 路径校验），不是容器隔离；要更强的隔离用 `sandbox/`。
 - 评测任务对 deepseek-flash 已接近全过，需要更难的 holdout 才能拉开差距。

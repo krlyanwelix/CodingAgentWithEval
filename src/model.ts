@@ -6,7 +6,24 @@ import type {
   SamplingOptions,
   ToolCall,
   ToolDefinition,
+  Usage,
 } from "./types.js";
+
+interface RawUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
+/** Providers disagree on whether they send usage at all; missing means unknown, not zero. */
+function toUsage(raw: RawUsage | undefined): Usage | undefined {
+  if (!raw || typeof raw.prompt_tokens !== "number" || typeof raw.completion_tokens !== "number") return undefined;
+  return {
+    promptTokens: raw.prompt_tokens,
+    completionTokens: raw.completion_tokens,
+    totalTokens: raw.total_tokens ?? raw.prompt_tokens + raw.completion_tokens,
+  };
+}
 
 function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
   const list = signals.filter((signal): signal is AbortSignal => Boolean(signal));
@@ -91,7 +108,7 @@ export class OpenAICompatibleModel implements Model {
             tool_choice: "auto",
           }
         : {}),
-      ...(stream ? { stream: true } : {}),
+      ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     });
   }
 
@@ -117,12 +134,15 @@ export class OpenAICompatibleModel implements Model {
       const payload = (await response.json()) as {
         choices?: Array<{ message?: Message; finish_reason?: string }>;
         error?: { message?: string };
+        usage?: RawUsage;
       };
       const choice = payload.choices?.[0];
       if (!choice?.message) throw new Error(payload.error?.message ?? "Model returned no message");
+      const usage = toUsage(payload.usage);
       return {
         ...choice.message,
         ...(choice.finish_reason ? { finishReason: choice.finish_reason } : {}),
+        ...(usage ? { usage } : {}),
       };
     });
   }
@@ -199,6 +219,7 @@ export class OpenAICompatibleModel implements Model {
       let content = "";
       let reasoning = "";
       let finishReason: string | undefined;
+      let usage: Usage | undefined;
       const calls = new Map<number, ToolCall>();
       let done = false;
 
@@ -219,6 +240,7 @@ export class OpenAICompatibleModel implements Model {
               tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>;
             };
           }>;
+          usage?: RawUsage;
         };
         try {
           payload = JSON.parse(data);
@@ -228,6 +250,7 @@ export class OpenAICompatibleModel implements Model {
           return undefined;
         }
         const choice = payload.choices?.[0];
+        usage = toUsage(payload.usage) ?? usage;
         if (choice?.finish_reason) finishReason = choice.finish_reason;
         const delta = choice?.delta;
         if (!delta) return undefined;
@@ -285,6 +308,7 @@ export class OpenAICompatibleModel implements Model {
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
           ...(reasoning ? { reasoning_content: reasoning } : {}),
           ...(finishReason ? { finishReason } : {}),
+          ...(usage ? { usage } : {}),
         },
       };
     } finally {

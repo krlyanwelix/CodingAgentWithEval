@@ -47,7 +47,7 @@ interface StateEntry {
   error?: string;
 }
 
-const DEFAULT_IMAGE = "lilpi-sandbox:local";
+const DEFAULT_IMAGE = "codingagentwitheval-sandbox:local";
 const DEFAULT_TTL_SECONDS = 600;
 
 /** Ready means the agent can run commands: execd answers /ping with the token. */
@@ -129,11 +129,11 @@ export class LifecycleService {
       labels: {},
     };
     record.labels = {
-      "lilpi.sandbox.id": record.id,
-      "lilpi.sandbox.image": record.image,
-      "lilpi.sandbox.created": String(record.createdAt),
-      "lilpi.sandbox.expires": String(record.expiresAt),
-      "lilpi.sandbox.execd": String(record.execdPort),
+      "codingagentwitheval.sandbox.id": record.id,
+      "codingagentwitheval.sandbox.image": record.image,
+      "codingagentwitheval.sandbox.created": String(record.createdAt),
+      "codingagentwitheval.sandbox.expires": String(record.expiresAt),
+      "codingagentwitheval.sandbox.execd": String(record.execdPort),
     };
 
     const prepared: PreparedSandbox = {
@@ -323,15 +323,15 @@ export class LifecycleService {
     const live = await this.runtime.get(id);
     if (!live) return undefined;
     const labels = live.labels ?? {};
-    const createdAt = Number(labels["lilpi.sandbox.created"]) || this.clock();
+    const createdAt = Number(labels["codingagentwitheval.sandbox.created"]) || this.clock();
     const expiresAt =
-      Number(labels["lilpi.sandbox.expires"]) || createdAt + this.defaultTtlSeconds * 1000;
+      Number(labels["codingagentwitheval.sandbox.expires"]) || createdAt + this.defaultTtlSeconds * 1000;
     const record: SandboxRecord = {
       id,
-      image: live.image ?? labels["lilpi.sandbox.image"] ?? this.defaultImage,
+      image: live.image ?? labels["codingagentwitheval.sandbox.image"] ?? this.defaultImage,
       createdAt,
       expiresAt,
-      execdPort: Number(labels["lilpi.sandbox.execd"]) || 8765,
+      execdPort: Number(labels["codingagentwitheval.sandbox.execd"]) || 8765,
       token: live.token ?? "",
       labels,
     };

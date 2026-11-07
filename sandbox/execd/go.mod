@@ -1,3 +1,3 @@
-module lilpi/execd
+module codingagentwitheval/execd
 
 go 1.24

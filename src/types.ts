@@ -1,5 +1,12 @@
 export type Role = "system" | "user" | "assistant" | "tool";
 
+/** Token accounting reported by the provider, when it reports one. */
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens?: number;
+}
+
 export interface Message {
   role: Role;
   content: string | null;
@@ -9,6 +16,8 @@ export interface Message {
   reasoning_content?: string;
   /** Provider stop reason, e.g. "stop", "length", "tool_calls". */
   finishReason?: string;
+  /** Usage for the call that produced this message; absent when the provider omits it. */
+  usage?: Usage;
 }
 
 export interface ToolCall {

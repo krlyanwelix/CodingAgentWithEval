@@ -5,7 +5,7 @@ import { existsSync, rmdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { findBash, tools } from "./tools.js";
+import { findBash, globToRegExp, tools } from "./tools.js";
 import type { Tool } from "./types.js";
 
 function tool(name: string): Tool {
@@ -108,4 +108,27 @@ test("bash keeps the workspace as its working directory", async (context) => {
     return;
   }
   assert.match(result.replace(/\//g, "\\").toLowerCase(), /myagentproject/);
+});
+
+test("glob patterns translate to anchored regular expressions", () => {
+  const ts = globToRegExp("src/**/*.ts");
+  assert.match("src/a.ts", ts);
+  assert.match("src/deep/nested/b.ts", ts);
+  assert.doesNotMatch("test/a.ts", ts);
+  assert.match("README.md", globToRegExp("*.md"));
+  assert.doesNotMatch("docs/README.md", globToRegExp("*.md"));
+});
+
+test("glob lists files under the workspace", async () => {
+  const result = await tool("glob").execute({ pattern: "src/harness/*.ts" });
+  assert.match(result, /src\/harness\/policy\.ts|src\\harness\\policy\.ts/);
+  assert.match(result, /src\/harness\/verify\.ts|src\\harness\\verify\.ts/);
+});
+
+test("grep reports file and line for each match", async () => {
+  const result = await tool("grep").execute({ pattern: "export function globToRegExp", path: "src" });
+  assert.match(result, /tools\.ts:\d+: export function globToRegExp/);
+  const needle = ["zzz", "no", "such", "symbol"].join("_");
+  const empty = await tool("grep").execute({ pattern: needle, path: "src" });
+  assert.match(empty, /No match for/);
 });

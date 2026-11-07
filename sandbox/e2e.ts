@@ -3,7 +3,7 @@
  *
  * Self-contained: starts the control plane in-process on an ephemeral port and
  * uses the real Docker runtime. Requires a running Docker daemon and the
- * lilpi-sandbox:local image (`npm run sandbox:image`).
+ * codingagentwitheval-sandbox:local image (`npm run sandbox:image`).
  *
  *   npm run sandbox:e2e
  */
@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   const service = new LifecycleService({
     runtime,
     metadata: new MemoryMetadataStore(),
-    defaultImage: process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local",
+    defaultImage: process.env.SANDBOX_IMAGE ?? "codingagentwitheval-sandbox:local",
     defaultTtlSeconds: 180,
     ttlSweepMs: 60_000,
   });

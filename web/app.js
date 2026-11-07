@@ -13,7 +13,7 @@ const state = {
   controller: null,
   attachment: null,
   model: "",
-  allowTools: localStorage.getItem("lilpiagent-allow-tools") !== "0",
+  allowTools: localStorage.getItem("codingagentwitheval-allow-tools") !== "0",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -892,11 +892,11 @@ function exportCurrentSession() {
   const session = state.sessions.find((item) => item.id === state.sessionId);
   const transcript = nodePath(state.nodes, state.nodeId).map((node) => [
     `You: ${node.userContent || ""}`,
-    node.assistantContent ? `LilPiAgent: ${node.assistantContent}` : "",
+    node.assistantContent ? `CodingAgentWithEval: ${node.assistantContent}` : "",
   ].filter(Boolean).join("\n\n")).join("\n\n");
   const anchor = document.createElement("a");
-  anchor.href = URL.createObjectURL(new Blob([`${session ? sessionName(session) : "LilPiAgent session"}\n\n${transcript}`], { type: "text/plain" }));
-  anchor.download = `${(session ? sessionName(session) : "lilpiagent-session").replace(/[^\p{L}\p{N}-]+/gu, "-").replace(/^-|-$/g, "") || "lilpiagent-session"}.txt`;
+  anchor.href = URL.createObjectURL(new Blob([`${session ? sessionName(session) : "CodingAgentWithEval session"}\n\n${transcript}`], { type: "text/plain" }));
+  anchor.download = `${(session ? sessionName(session) : "codingagentwitheval-session").replace(/[^\p{L}\p{N}-]+/gu, "-").replace(/^-|-$/g, "") || "codingagentwitheval-session"}.txt`;
   anchor.click();
   URL.revokeObjectURL(anchor.href);
   notify("Conversation exported.");
@@ -1055,7 +1055,7 @@ $("composer").addEventListener("submit", sendMessage);
 $("allow-tools").checked = state.allowTools;
 $("allow-tools").addEventListener("change", (event) => {
   state.allowTools = event.currentTarget.checked;
-  localStorage.setItem("lilpiagent-allow-tools", state.allowTools ? "1" : "0");
+  localStorage.setItem("codingagentwitheval-allow-tools", state.allowTools ? "1" : "0");
 });
 $("new-session").addEventListener("click", openSessionDialog);
 $("refresh").addEventListener("click", () => refreshSessions());

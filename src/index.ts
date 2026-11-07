@@ -8,6 +8,8 @@ import { SessionStore } from "./session-store.js";
 import { createSkillLoaderTool, discoverSkills, loadExternalTools } from "./loader.js";
 import { Mem0Client, type Mem0Memory } from "./mem0-client.js";
 import { buildSystemPrompt } from "./prompt.js";
+import { policyFromEnv, verificationFromEnv } from "./harness/config.js";
+import { traceFromEnv } from "./harness/trace.js";
 
 const { model, settings: modelSettings } = (() => {
   try {
@@ -133,6 +135,10 @@ const agent = new Agent({
   modelTimeoutMs: modelSettings.timeoutMs,
   streamIdleTimeoutMs: modelSettings.streamIdleTimeoutMs,
   systemPrompt: buildSystemPrompt(modelSettings.model, skills),
+  policy: policyFromEnv(),
+  verification: verificationFromEnv(),
+  trace: traceFromEnv(),
+  statusBar: process.env.AGENT_STATUS_BAR !== "0",
   confirmToolCall: async (toolCall) => {
     let detail = toolCall.function.arguments;
     if (toolCall.function.name === "bash") try {

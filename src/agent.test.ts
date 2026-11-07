@@ -49,7 +49,8 @@ test("the loop executes a tool call and feeds the result back to the model", asy
 
   const toolEnd = events.find((event) => event.type === "tool_end");
   assert.ok(toolEnd && toolEnd.type === "tool_end");
-  assert.equal(toolEnd.result, "ok:42");
+  // The status line rides on the tail of the last result; the payload must still lead.
+  assert.ok(toolEnd.result.startsWith("ok:42"), toolEnd.result);
 
   const agentEnd = events.find((event) => event.type === "agent_end");
   assert.ok(agentEnd && agentEnd.type === "agent_end");
@@ -59,7 +60,7 @@ test("the loop executes a tool call and feeds the result back to the model", asy
   const secondPrompt = model.calls[1]!;
   assert.equal(secondPrompt[0]?.role, "system");
   assert.equal(secondPrompt.at(-1)?.role, "tool");
-  assert.equal(secondPrompt.at(-1)?.content, "ok:42");
+  assert.ok(secondPrompt.at(-1)?.content?.startsWith("ok:42"), String(secondPrompt.at(-1)?.content));
 });
 
 test("a failed tool returns an error string instead of breaking the run", async () => {
@@ -278,13 +279,16 @@ test("tool calls in one step run concurrently but report in call order", async (
   const elapsed = Date.now() - started;
 
   const ends = events.filter((event) => event.type === "tool_end").map((event) => (event as { result: string }).result);
-  assert.deepEqual(ends, ["slow done", "fast done"]);
+  assert.deepEqual(
+    ends.map((result) => result.split("\n\n[harness]")[0]),
+    ["slow done", "fast done"],
+  );
   assert.ok(elapsed < 220, `calls should overlap, took ${elapsed}ms`);
 
   // Both results land in the next prompt, in call order.
   const prompt = model.calls[1]!;
   assert.deepEqual(
-    prompt.slice(-2).map((message) => message.content),
+    prompt.slice(-2).map((message) => String(message.content).split("\n\n[harness]")[0]),
     ["slow done", "fast done"],
   );
 });

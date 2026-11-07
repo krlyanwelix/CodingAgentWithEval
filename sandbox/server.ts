@@ -11,7 +11,7 @@ import { FileMetadataStore } from "./metadata.js";
 import { LifecycleService } from "./service.js";
 
 const port = Number(process.env.SANDBOX_PORT ?? 8090);
-const image = process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local";
+const image = process.env.SANDBOX_IMAGE ?? "codingagentwitheval-sandbox:local";
 const runtime = new DockerRuntime();
 const metadata = new FileMetadataStore(resolve("data/sandboxes.json"));
 const service = new LifecycleService({

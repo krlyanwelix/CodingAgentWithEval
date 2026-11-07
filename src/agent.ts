@@ -8,6 +8,11 @@ import {
   type ContextOptions,
 } from "./context.js";
 import { estimateTokens } from "./tokens.js";
+import { classifyToolError } from "./harness/errors.js";
+import { describeDecision, evaluateToolCall, type PolicyOptions } from "./harness/policy.js";
+import { appendStatus, buildStatusLine } from "./harness/status.js";
+import { TraceRecorder } from "./harness/trace.js";
+import { formatVerificationFailure, runVerification, type VerifyCheck } from "./harness/verify.js";
 import type { AgentEvent, Message, Model, Tool, ToolCall, ToolDefinition } from "./types.js";
 
 export interface AgentOptions {
@@ -23,6 +28,20 @@ export interface AgentOptions {
   modelTimeoutMs?: number;
   /** Abort a streaming call when no bytes arrive for this long. */
   streamIdleTimeoutMs?: number;
+  /** Capability and risk policy checked before every tool call. */
+  policy?: PolicyOptions;
+  /** Append a compact state line to the last tool result of each batch. Default true. */
+  statusBar?: boolean;
+  /** Structured JSONL trace; omitted means no tracing. */
+  trace?: TraceRecorder;
+  /** Completion gate: these checks must pass before the run may end. */
+  verification?: {
+    checks: VerifyCheck[];
+    /** Repair rounds allowed after a failed answer. Default 1. */
+    maxAttempts?: number;
+    /** Directory the checks run in. Default process.cwd(). */
+    dir?: string;
+  };
 }
 
 export interface RunOptions {
@@ -39,6 +58,8 @@ interface PreparedCall {
   value?: string;
   tool?: Tool;
   args?: unknown;
+  /** Policy said "ask" even though the tool itself does not require confirmation. */
+  needsApproval?: boolean;
 }
 
 const DIGEST_HEADER = "[已压缩的早期对话摘要]";
@@ -65,6 +86,14 @@ export class Agent {
   private toolFailureStreak = 0;
   /** Consecutive calls skipped as duplicates; three in a row stop the run. */
   private skippedCallStreak = 0;
+  /** Everything below feeds the status line and the trace. */
+  private readonly trace: TraceRecorder;
+  private readonly statusBar: boolean;
+  private toolCallCount = 0;
+  private touchedFiles: string[] = [];
+  private verificationAttempts = 0;
+  private promptTokens = 0;
+  private completionTokens = 0;
 
   constructor(private readonly options: AgentOptions) {
     this.toolByName = new Map(options.tools.map((tool) => [tool.definition.name, tool]));
@@ -74,6 +103,8 @@ export class Agent {
     this.maxTurns = options.maxTurns ?? 20;
     this.messages = [{ role: "system", content: options.systemPrompt }, ...(options.history ?? [])];
     this.contextOptions = { ...DEFAULT_CONTEXT_OPTIONS, ...(options.context ?? {}) };
+    this.trace = options.trace ?? new TraceRecorder();
+    this.statusBar = options.statusBar ?? true;
   }
 
   /** The full conversation, including the leading system message. */
@@ -91,6 +122,10 @@ export class Agent {
     this.lastToolCall = undefined;
     this.toolFailureStreak = 0;
     this.skippedCallStreak = 0;
+    this.toolCallCount = 0;
+    this.touchedFiles = [];
+    this.verificationAttempts = 0;
+    this.trace.record("run_start", { input: input.slice(0, 500), maxTurns: this.maxTurns });
 
     let partial = "";
     try {
@@ -123,7 +158,18 @@ export class Agent {
         }
 
         signal?.throwIfAborted();
+        if (assistantMessage.usage) {
+          this.promptTokens += assistantMessage.usage.promptTokens;
+          this.completionTokens += assistantMessage.usage.completionTokens;
+        }
         this.messages.push(assistantMessage);
+        this.trace.record("model_end", {
+          turn,
+          finishReason: assistantMessage.finishReason,
+          contentChars: (assistantMessage.content ?? "").length,
+          toolCalls: assistantMessage.tool_calls?.length ?? 0,
+          usage: assistantMessage.usage,
+        });
         yield { type: "message_end", message: assistantMessage };
 
         const calls = assistantMessage.tool_calls ?? [];
@@ -140,6 +186,34 @@ export class Agent {
           if (!truncated && !(assistantMessage.content ?? "").trim() && !assistantMessage.reasoning_content) {
             yield { type: "warning", message: "The model returned an empty answer." };
           }
+          // "Done" is a claim. When a gate is configured, the harness checks the
+          // workspace itself and sends the failures back instead of trusting it.
+          const verification = this.options.verification;
+          if (verification && verification.checks.length > 0 && this.verificationAttempts < (verification.maxAttempts ?? 1)) {
+            const results = await runVerification(verification.dir ?? process.cwd(), verification.checks, signal);
+            const failed = results.filter((result) => !result.pass);
+            this.trace.record("verification", {
+              turn,
+              passed: results.length - failed.length,
+              failed: failed.map((result) => result.name),
+            });
+            if (failed.length > 0) {
+              this.verificationAttempts += 1;
+              this.messages.push({ role: "user", content: formatVerificationFailure(results) });
+              yield {
+                type: "warning",
+                message: `Verification failed (${failed.map((result) => result.name).join(", ")}); sending the failures back for repair.`,
+              };
+              continue;
+            }
+          }
+          this.trace.record("run_end", {
+            turn,
+            reason: "completed",
+            toolCalls: this.toolCallCount,
+            promptTokens: this.promptTokens,
+            completionTokens: this.completionTokens,
+          });
           yield { type: "agent_end", message: assistantMessage };
           return;
         }
@@ -150,13 +224,36 @@ export class Agent {
           signal?.throwIfAborted();
           yield { type: "tool_start", toolCall };
         }
+        this.toolCallCount += calls.length;
+        for (const toolCall of calls) this.noteTouched(toolCall);
+        this.trace.record("tool_batch", { turn, tools: calls.map((call) => call.function.name) });
         const results = await this.runToolCalls(calls, signal);
         signal?.throwIfAborted();
+        const statusLine = this.statusBar
+          ? buildStatusLine({
+              turn,
+              maxTurns: this.maxTurns,
+              toolCalls: this.toolCallCount,
+              continuousFailures: this.toolFailureStreak,
+              contextTokens: this.estimatePayload(),
+              contextLimit: Math.max(1, this.contextOptions.maxInputTokens - this.contextOptions.reserveTokens),
+              touchedFiles: this.touchedFiles,
+            })
+          : "";
         for (let index = 0; index < calls.length; index += 1) {
           const toolCall = calls[index]!;
           const result = results[index]!;
-          this.messages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
-          yield { type: "tool_end", toolCall, result };
+          // The status line rides on the last result of the batch: a separate
+          // message would break the assistant-tool-call pairing providers expect.
+          const content = index === calls.length - 1 ? appendStatus(result, statusLine) : result;
+          this.messages.push({ role: "tool", tool_call_id: toolCall.id, content });
+          this.trace.record("tool_end", {
+            turn,
+            tool: toolCall.function.name,
+            failed: result.startsWith("Tool error") || /^exit_code: (?!0)\d+/m.test(result),
+            resultChars: result.length,
+          });
+          yield { type: "tool_end", toolCall, result: content };
         }
 
         const stopReason = this.stopReason();
@@ -276,14 +373,36 @@ export class Agent {
   private async runToolCalls(calls: ToolCall[], signal?: AbortSignal): Promise<string[]> {
     const prepared = calls.map((call) => this.prepareCall(call));
 
+    // Policy first: a denied call never reaches the user or the filesystem.
+    for (const item of prepared) {
+      if (item.kind !== "run" || !item.tool) continue;
+      const decision = evaluateToolCall(item.call.function.name, item.args, this.options.policy);
+      this.trace.record("policy", {
+        tool: item.call.function.name,
+        decision: decision.decision,
+        risk: decision.risk,
+        reason: decision.reason,
+      });
+      if (decision.decision === "deny") {
+        item.kind = "result";
+        item.value =
+          `Tool error: policy denied this call (${describeDecision(decision)}). ` +
+          "Corrective: choose an action inside the allowed capabilities, or explain why it is needed.";
+        continue;
+      }
+      if (decision.decision === "ask") item.needsApproval = true;
+    }
+
     // Confirmation prompts share one terminal, so ask them one at a time.
     for (const item of prepared) {
-      if (item.kind !== "run" || !item.tool?.requiresConfirmation) continue;
+      if (item.kind !== "run" || !item.tool) continue;
+      if (!item.tool.requiresConfirmation && !item.needsApproval) continue;
       const approved = this.options.confirmToolCall ? await this.options.confirmToolCall(item.call) : false;
       if (!approved) {
         item.kind = "result";
-        item.value =
-          "Tool execution cancelled by the user. Corrective: ask before acting, or choose an action the user approves.";
+        item.value = item.needsApproval
+          ? "Tool execution blocked: this call needs approval and was not approved. Corrective: ask before acting, or choose a safer action."
+          : "Tool execution cancelled by the user. Corrective: ask before acting, or choose an action the user approves.";
       }
     }
 
@@ -303,6 +422,17 @@ export class Agent {
 
     // Account in call order so hints and streaks do not depend on completion order.
     return outcomes.map((result) => this.accountToolResult(result));
+  }
+
+  /** Remember which files this run wrote, for the status line and the trace. */
+  private noteTouched(call: ToolCall): void {
+    if (call.function.name !== "write" && call.function.name !== "edit") return;
+    try {
+      const args = JSON.parse(call.function.arguments || "{}") as { path?: unknown };
+      if (typeof args.path === "string" && !this.touchedFiles.includes(args.path)) this.touchedFiles.push(args.path);
+    } catch {
+      // Invalid JSON is already reported by prepareCall; nothing to track here.
+    }
   }
 
   /** Decide what a tool call does without touching the filesystem. */
@@ -360,7 +490,9 @@ export class Agent {
 
     this.toolFailureStreak += 1;
     const hints: string[] = [];
-    if (/outside the current working directory|ENOENT|no such file/i.test(result)) {
+    const classified = classifyToolError(result);
+    if (classified.hint) hints.push(classified.hint);
+    else if (/outside the current working directory|ENOENT|no such file/i.test(result)) {
       hints.push("paths are relative to the workspace root; list the directory before reading a guessed name");
     }
     if (this.toolFailureStreak >= 2) {

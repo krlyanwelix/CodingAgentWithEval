@@ -15,7 +15,7 @@ test(
     const service = new LifecycleService({
       runtime,
       metadata: new MemoryMetadataStore(),
-      defaultImage: process.env.SANDBOX_IMAGE ?? "lilpi-sandbox:local",
+      defaultImage: process.env.SANDBOX_IMAGE ?? "codingagentwitheval-sandbox:local",
       defaultTtlSeconds: 180,
       ttlSweepMs: 60_000,
     });

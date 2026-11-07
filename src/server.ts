@@ -10,6 +10,8 @@ import { createSkillLoaderTool, discoverSkills, loadExternalTools } from "./load
 import { Mem0Client, type Mem0Memory } from "./mem0-client.js";
 import type { Message } from "./types.js";
 import { buildSystemPrompt } from "./prompt.js";
+import { policyFromEnv, verificationFromEnv } from "./harness/config.js";
+import { traceFromEnv } from "./harness/trace.js";
 
 const projectRoot = resolve(process.cwd());
 const webRoot = join(projectRoot, "web");
@@ -84,6 +86,11 @@ function createAgent(history: Message[], allowTools: boolean): Agent {
     // The web UI has no terminal prompt, so the browser decides per request whether
     // commands may run (the composer toggle) and the server can force-deny with WEB_ALLOW_TOOLS=0.
     confirmToolCall: async () => allowTools,
+    // In the browser there is nobody to answer a second prompt: the per-request
+    // toggle already grants shell, so auto-approve the policy's "ask" decisions.
+    policy: { ...policyFromEnv(), autoApproveRisk: allowTools ? "high" : "never" },
+    verification: verificationFromEnv(),
+    trace: traceFromEnv(),
   });
 }
 
@@ -268,6 +275,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, host, () => console.log(`LilPiAgent web UI: http://${host}:${port}`));
+server.listen(port, host, () => console.log(`CodingAgentWithEval web UI: http://${host}:${port}`));
 process.on("SIGINT", () => { sessionStore.close(); mem0.close(); server.close(() => process.exit(0)); });
 process.on("SIGTERM", () => { sessionStore.close(); mem0.close(); server.close(() => process.exit(0)); });
