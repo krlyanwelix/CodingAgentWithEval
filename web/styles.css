@@ -1,14 +1,22 @@
+/* Self-hosted Fira: latin subset only (23-25 KB each). CJK uses the system stack. */
+@font-face { font-family: "Fira Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/fira-sans-400.woff2") format("woff2"); }
+@font-face { font-family: "Fira Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("fonts/fira-sans-500.woff2") format("woff2"); }
+@font-face { font-family: "Fira Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("fonts/fira-sans-600.woff2") format("woff2"); }
+@font-face { font-family: "Fira Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("fonts/fira-sans-700.woff2") format("woff2"); }
+@font-face { font-family: "Fira Code"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/fira-code-400.woff2") format("woff2"); }
+@font-face { font-family: "Fira Code"; font-style: normal; font-weight: 500; font-display: swap; src: url("fonts/fira-code-500.woff2") format("woff2"); }
+
 :root {
   color-scheme: light;
   /* surfaces: warm near-neutral */
-  --bg: var(--bg);
-  --panel: var(--panel);
-  --panel-soft: var(--panel-soft);
+  --bg: #f7f6f3;
+  --panel: #ffffff;
+  --panel-soft: #faf9f6;
   --line: #e8e5df;
   --line-strong: #d5d1c9;
   --line-soft: #efeeea;
   --danger-soft: #fdf1ef;
-  --user: var(--user);
+  --user: #f4f2ee;
   /* ink: one warm neutral ramp */
   --ink: #23241f;
   --ink-2: #55564e;
@@ -19,7 +27,7 @@
   /* the single accent */
   --accent: #b4552f;
   --accent-fill: #b4552f;
-  --accent-hover: var(--accent-hover);
+  --accent-hover: #9a4526;
   --accent-soft: #fbeee7;
   --success: #3f7f5f;
   --danger: #a8453a;
@@ -33,11 +41,14 @@
   --fs-title: 24px;
   --lh-tight: 1.35;
   --lh-body: 1.62;
+  /* type faces: self-hosted, latin subset; CJK falls back to the system */
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 * { box-sizing: border-box; }
  .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 html, body { width: 100%; height: 100%; overflow: hidden; }
-body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 15px/1.6 var(--font-sans); }
 button, textarea, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
@@ -106,7 +117,7 @@ button:disabled { cursor: default; opacity: .55; }
 .message { display: flex; align-items: flex-start; gap: 5px; max-width: 780px; margin: 0 auto 24px; }
 .message.user { justify-content: flex-end; }
 .message-avatar { display: block; flex: none; width: 34px; height: 34px; margin-top: 2px; border: 1px solid var(--line); border-radius: 11px; object-fit: cover; }
-.message-content { display: flex; flex-direction: column; min-width: 0; max-width: calc(100% - 39px); }
+.message-content { display: flex; flex: 1 1 auto; flex-direction: column; align-items: flex-start; min-width: 0; max-width: calc(100% - 39px); }
 .message.user .message-content { align-items: flex-end; }
 .role-label { padding: 0 3px 3px; color: var(--muted); font-size: var(--fs-xs); line-height: 1.2; }
 .tool-list { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 2px 4px; }
@@ -195,7 +206,7 @@ button:disabled { cursor: default; opacity: .55; }
 /* CodingAgentWithEval workspace redesign */
 /* [hidden] must win over component display rules (session filter, tooltips, stop/send). */
 [hidden] { display: none !important; }
-html, body { background: var(--bg); color: var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+html, body { background: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
 button, input, textarea { font-family: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid rgba(180, 85, 47, .55); outline-offset: 2px; }
 .app-shell { grid-template-columns: 248px minmax(0, 1fr) 306px; grid-template-rows: 62px minmax(0, 1fr); grid-template-areas: "header header header" "sidebar workspace context"; background: var(--bg); }
@@ -277,7 +288,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .empty-icon { width: 42px; height: 42px; border-color: var(--accent-soft); background: var(--accent-soft); color: var(--accent); }
 .empty-state h1 { font-family: inherit; font-size: var(--fs-title); letter-spacing: -.03em; }
 .empty-state p { color: var(--ink-3); font-size: var(--fs-base); }
-.message { gap: 10px; max-width: 760px; margin-bottom: 26px; }
+.message { gap: 10px; width: 100%; max-width: 760px; margin-bottom: 26px; }
 .message-avatar { width: 29px; height: 29px; margin-top: 1px; border: 0; border-radius: 9px; }
 .role-label { padding-bottom: 5px; color: var(--ink-2); font-size: var(--fs-xs); font-weight: 600; }
 .tool-list { padding-bottom: 5px; }
@@ -287,7 +298,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .composer { display: block; flex: none; margin: 0 28px 0; padding: 10px 12px 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 3px 12px rgba(40, 42, 39, .045); }
 .composer:focus-within { border-color: var(--accent-hover); box-shadow: 0 0 0 3px rgba(220, 120, 75, .08); }
 .composer textarea { display: block; width: 100%; min-height: 38px; max-height: 150px; padding: 4px 3px 9px; resize: none; font-size: var(--fs-base); }
-.composer textarea::placeholder { color: var(--ink-3); opacity: 1; }
+.composer textarea::placeholder { color: var(--ink-3); opacity: 1; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; min-height: 30px; padding-top: 7px; border-top: 1px solid var(--line-soft); }
 .composer-tools, .composer-submit { display: flex; align-items: center; gap: 8px; }
@@ -432,13 +443,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .md-list { margin: 0 0 8px; padding-left: 18px; }
 .md-list li { margin: 2px 0; }
 .md-quote { margin: 0 0 8px; padding: 4px 10px; border-left: 2px solid var(--line-strong); color: var(--ink-2); }
-.md-inline-code { padding: 1px 4px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--panel-soft); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .92em; }
+.md-inline-code { padding: 1px 4px; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--panel-soft); font-family: var(--font-mono); font-size: .92em; }
 .md-codeblock { margin: 8px 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
 .md-codeblock-head { display: flex; align-items: center; justify-content: space-between; padding: 3px 6px 3px 10px; border-bottom: 1px solid var(--line-soft); background: var(--user); }
 .md-codeblock-lang { color: var(--ink-3); font-size: var(--fs-xs); letter-spacing: .04em; text-transform: uppercase; }
 .md-copy { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink-2); font-size: var(--fs-xs); cursor: pointer; }
 .md-copy:hover { color: var(--ink); border-color: var(--line-strong); }
-.md-codeblock pre { margin: 0; padding: 9px 11px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: var(--fs-sm); line-height: 1.55; }
+.md-codeblock pre { margin: 0; padding: 9px 11px; overflow: auto; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.55; }
 
 /* Tool activity */
 .tool-log { display: grid; gap: 4px; margin-bottom: 5px; }
@@ -448,11 +459,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .tool-entry summary::-webkit-details-marker { display: none; }
 .tool-entry summary::before { content: "›"; color: var(--ink-4); font-size: var(--fs-xs); transition: transform .12s ease; }
 .tool-entry[open] summary::before { transform: rotate(90deg); }
-.tool-entry-name { color: var(--ink-2); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: var(--fs-sm); font-weight: 600; }
+.tool-entry-name { color: var(--ink-2); font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 600; }
 .tool-entry-hint { min-width: 0; overflow: hidden; color: var(--ink-3); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .tool-entry-status { margin-left: auto; color: var(--ink-3); font-size: var(--fs-xs); letter-spacing: .04em; text-transform: uppercase; }
 .tool-entry-status.error { color: var(--danger); }
-.tool-entry-output { margin: 0; padding: 7px 9px; max-height: 240px; overflow: auto; border-top: 1px solid var(--line-soft); color: var(--ink-2); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; }
+.tool-entry-output { margin: 0; padding: 7px 9px; max-height: 240px; overflow: auto; border-top: 1px solid var(--line-soft); color: var(--ink-2); font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; }
 .message-notice { padding: 4px 8px; border-left: 2px solid var(--line-strong); color: var(--ink-2); font-size: var(--fs-sm); }
 
 /* Attachments and suggestions */

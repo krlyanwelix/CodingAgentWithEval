@@ -19,6 +19,7 @@
 - **可观测**：每条轨迹可落 JSONL（`TRACE_DIR`），包含模型调用、工具批次、状态栏与验证结果；工具结果末尾的 `[harness]` 状态行让模型自己看到轮数、连续失败与上下文余量。
 - **扩展**：技能 `skills/**/SKILL.md` 渐进式加载，外部工具放 `tools/`；长期记忆是独立服务（Mem0 + 内嵌 Qdrant），agent 只通过 `MemoryPort` 访问，服务挂了也不影响主流程。
 - **双入口**：命令行 REPL 与轻量 Web（SSE 流式，Markdown 渲染、工具调用折叠、随时停止）。
+- **界面**：自托管 Fira Sans / Fira Code（latin 子集，共约 145 KB，无外部字体请求；CJK 回退系统字体），排版与对比度按 WCAG AA 收口，跟随系统深色模式。
 - **评测**：17 个任务（含 1 个 holdout），沙箱执行、自动判分、轨迹落 JSONL；`eval/evolve.ts` 支持 skill 自进化。
 
 ## 快速开始

@@ -1305,6 +1305,15 @@ inputEl.addEventListener("keydown", (event) => {
   }
 });
 
+// The full prompt is a sentence; on narrow screens it would be clipped mid-word.
+function syncComposerPlaceholder() {
+  const short = "Ask CodingAgentWithEval…";
+  const full = "Ask CodingAgentWithEval to build, inspect or explain…";
+  inputEl.placeholder = window.matchMedia("(max-width: 720px)").matches ? short : full;
+}
+syncComposerPlaceholder();
+window.addEventListener("resize", syncComposerPlaceholder);
+
 refreshSessions().catch((error) => { $("session-meta").textContent = error.message; });
 loadMemories().catch(() => {
   memoryCountEl.textContent = "!";
