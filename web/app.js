@@ -633,10 +633,27 @@ function addMessage(role, content = "", tools = [], toolResults = []) {
   const api = { bubble, toolLog, toolRecords: new Map(), setTools };
   if (role === "assistant") {
     let frame = 0;
+    let latest = "";
+    // Streaming shows plain text (one textContent write per frame); the Markdown
+    // parse runs once when the turn settles. Re-parsing the whole message on every
+    // frame was O(n²) and showed up as a stutter on long answers.
+    api.stream = (text) => {
+      latest = text;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        bubble.classList.add("is-streaming");
+        bubble.lang = langOf(latest);
+        bubble.textContent = latest;
+        scrollIfFollowing();
+      });
+    };
     api.setText = (text) => {
+      latest = text;
       if (frame) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         frame = 0;
+        bubble.classList.remove("is-streaming");
         bubble.lang = langOf(text);
         bubble.replaceChildren(renderMarkdown(text));
         scrollIfFollowing();
@@ -644,6 +661,19 @@ function addMessage(role, content = "", tools = [], toolResults = []) {
     };
     api.notice = (message) => {
       toolLog.append(element("div", "message-notice", message));
+    };
+    api.noticeAction = (message, label, action) => {
+      const notice = element("div", "message-notice");
+      const text = element("span", null, message);
+      const button = element("button", "text-link", label);
+      button.type = "button";
+      button.addEventListener("click", () => {
+        button.disabled = true;
+        action();
+      });
+      notice.append(text, button);
+      toolLog.append(notice);
+      return notice;
     };
     api.addTool = (toolCall) => {
       const entry = document.createElement("details");
@@ -1260,6 +1290,7 @@ async function sendMessage(event) {
   const toolNames = [];
   let streamed = "";
   let aborted = false;
+  let failure = "";
   state.controller = new AbortController();
   $("session-meta").textContent = "Working…";
   messagesEl.setAttribute("aria-busy", "true");
@@ -1291,7 +1322,7 @@ async function sendMessage(event) {
         const data = JSON.parse(line.slice(6));
         if (data.type === "text_delta") {
           streamed += data.text;
-          assistantMessage.setText(streamed);
+          assistantMessage.stream(streamed);
         } else if (data.type === "tool_start") {
           const toolName = data.toolCall?.function?.name;
           if (toolName) toolNames.push(toolName);
@@ -1328,25 +1359,43 @@ async function sendMessage(event) {
       aborted = true;
       assistantMessage.setText(streamed ? `${streamed}\n\n_Stopped._` : "_Stopped._");
     } else {
-      assistantMessage.setText(`**Request failed.** ${error instanceof Error ? error.message : String(error)}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      failure = reason;
+      assistantMessage.setText(`**Request failed.** ${reason}`);
+      // A dropped connection is usually transient: offer the same turn again
+      // instead of making the reader retype it.
+      assistantMessage.noticeAction("Lost the model connection.", "Retry", () => {
+        inputEl.value = prompt;
+        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+        $("composer").requestSubmit();
+      });
       $("session-meta").textContent = "Error";
-      setRunStatus("error", "Request failed", (error instanceof Error ? error.message : String(error)).slice(0, 80));
+      setRunStatus("error", "Request failed", reason.slice(0, 80));
       notify("The request failed.");
     }
   } finally {
     state.controller = null;
     setBusy(false);
+    // setBusy restores the idle strip; a failed turn must not read as "ready".
+    if (failure) setRunStatus("error", "Request failed", failure.slice(0, 80));
     messagesEl.setAttribute("aria-busy", "false");
     $("tool-count").textContent = toolNames.length ? String(new Set(toolNames).size) : "None";
     if (aborted) {
       $("session-meta").textContent = "Stopped";
       refreshSessions(false).catch(() => undefined);
     } else {
-      $("session-meta").textContent = "Ready";
+      $("session-meta").textContent = failure ? "Error" : "Ready";
       try {
         await refreshSessions(false);
         await loadNodes(state.nodeId);
-      } catch { /* keep the streamed transcript on screen */ }
+        // The transcript is rebuilt from storage; render Markdown once here for the
+        // case where the rebuild keeps the in-memory bubble (resumed/forked nodes).
+        if (streamed) assistantMessage.setText(streamed);
+      } catch {
+        // Keep the transcript on screen; render Markdown in place if the
+        // rebuild never happened.
+        if (streamed) assistantMessage.setText(streamed);
+      }
       if (memoryPanel.open) await loadMemories(memoryQueryEl.value.trim()).catch(() => undefined);
       else {
         state.memoriesLoaded = false;
