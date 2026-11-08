@@ -297,7 +297,7 @@ function renderMemories() {
     item.className = "memory-item";
     const content = document.createElement("div");
     content.className = "memory-text";
-    content.textContent = memory.memory || memory.content || "";
+    content.textContent = memory.text || memory.memory || memory.content || "";
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "memory-delete text-button compact";

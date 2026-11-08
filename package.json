@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.eval.json",
     "start": "node dist/index.js",
     "start:web": "node dist/server.js",
-    "test": "node --import tsx --test src/context.test.ts src/session-store.test.ts src/agent.test.ts src/model.test.ts src/model-config.test.ts src/tools.test.ts eval/proposal.test.ts eval/verifiers.test.ts eval/judge.test.ts sandbox/service.test.ts sandbox/control-plane.test.ts sandbox/execd.test.ts",
+    "test": "node --import tsx --test src/context.test.ts src/session-store.test.ts src/agent.test.ts src/model.test.ts src/model-config.test.ts src/tools.test.ts src/memory/memory.test.ts eval/proposal.test.ts eval/verifiers.test.ts eval/judge.test.ts sandbox/service.test.ts sandbox/control-plane.test.ts sandbox/execd.test.ts",
     "test:docker": "node --import tsx --test sandbox/docker-runtime.test.ts",
     "sandbox:image": "docker build -t codingagentwitheval-sandbox:local sandbox/execd",
     "sandbox": "tsx sandbox/server.ts",
@@ -18,7 +18,9 @@
     "eval": "node --env-file=.env --import tsx eval/run.ts",
     "eval:judge": "node --env-file=.env --import tsx eval/judge.smoke.ts",
     "eval:calibrate": "node --env-file=.env --import tsx eval/calibrate.ts",
-    "evolve": "node --env-file=.env --import tsx eval/evolve.ts"
+    "evolve": "node --env-file=.env --import tsx eval/evolve.ts",
+    "memory": "python memory-sidecar.py",
+    "memory:selftest": "python memory-sidecar.py --self-test"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

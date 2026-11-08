@@ -17,7 +17,7 @@
 - **约束层**：`src/harness/policy.ts` 解析每条命令的能力（读/写/shell/网络/git 写）与风险，危险命令先拦再问；能力可在 `.env` 里按需授予。
 - **验证层**：结束前跑配置好的检查命令（测试、lint、类型检查），失败就把结果回灌给模型继续修，最多 N 次——完成判定看结构化事实，不看模型自称。
 - **可观测**：每条轨迹可落 JSONL（`TRACE_DIR`），包含模型调用、工具批次、状态栏与验证结果；工具结果末尾的 `[harness]` 状态行让模型自己看到轮数、连续失败与上下文余量。
-- **扩展**：技能 `skills/**/SKILL.md` 渐进式加载，外部工具放 `tools/`，Mem0 长期记忆（可选）。
+- **扩展**：技能 `skills/**/SKILL.md` 渐进式加载，外部工具放 `tools/`；长期记忆是独立服务（Mem0 + 内嵌 Qdrant），agent 只通过 `MemoryPort` 访问，服务挂了也不影响主流程。
 - **双入口**：命令行 REPL 与轻量 Web（SSE 流式，Markdown 渲染、工具调用折叠、随时停止）。
 - **评测**：17 个任务（含 1 个 holdout），沙箱执行、自动判分、轨迹落 JSONL；`eval/evolve.ts` 支持 skill 自进化。
 
@@ -71,8 +71,19 @@ MODEL=deepseek-flash
 | `JUDGE_BASE_URL` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | judge 接口地址 |
 | `JUDGE_MODEL` | `qwen3.8-flash` | judge 模型名 |
 | `JUDGE_SAMPLES` | `3` | judge 采样数（1–5），按 criterion 多数票合并 |
-| `MEM0_URL` | `http://127.0.0.1:8765` | 记忆 sidecar 地址 |
-| `MEM0_AUTOSTART` | `true` | 是否自动拉起记忆 sidecar |
+| `MEMORY_SERVICE_URL` | `http://127.0.0.1:8765` | 记忆服务地址 |
+| `MEMORY_USER_ID` | `local-user` | 记忆归属的用户 id |
+| `MEMORY_PROJECT_ID` | 按 cwd 派生 | 记忆作用域，避免不同仓库互相污染 |
+| `MEMORY_AUTOSTART` | `true` | 是否自动拉起记忆服务 |
+| `MEMORY_PYTHON` | `python` | 启动服务用的解释器 |
+| `MEMORY_LOG` | `data/memory-service.log` | 服务输出日志 |
+| `MEMORY_AUDIT_PATH` | `data/memory-audit.jsonl` | 审计日志（只记元数据，不记原文） |
+| `MEMORY_TTL_DAYS` | `0` | 记忆过期天数，0 表示永久 |
+| `MEMORY_LIMIT` | `5` | 每次召回的条数上限 |
+| `MEMORY_MIN_SCORE` | `0.35` | 召回相关度阈值（实测：同文本 1.0、关键词 0.6、无关 0.09） |
+| `MEMORY_BUDGET_CHARS` | `900` | 注入提示词的记忆字符预算 |
+| `MEMORY_REQUEST_TIMEOUT_MS` | `30000` | 单次记忆请求超时 |
+| `MEMORY_START_TIMEOUT_MS` | `20000` | 等待服务就绪的超时 |
 
 ## 目录结构
 
@@ -89,6 +100,12 @@ src/
     errors.ts       工具错误分类
     trace.ts        轨迹 JSONL
     config.ts       .env 解析
+  memory/           长期记忆的端口与客户端
+    types.ts        MemoryPort 契约与数据结构
+    service.ts      HTTP 客户端、自动拉起、失败开放
+    format.ts       召回块格式化（字符预算）
+    policy.ts       写入过滤、轮次摘要
+    redact.ts       密钥脱敏（与服务端同一套规则）
   context.ts        token 估算、历史压缩、工具结果截断
   tokens.ts         token 估算工具函数
   session-store.ts  SQLite 会话树
@@ -131,16 +148,20 @@ PORT=8080 npm run dev:web
 
 会话存在 `data/agent.sqlite`，每个 turn 一个节点。启动时选择会话，用 `r<number>` 续聊或 `f<number>` 分叉；Ctrl+C 取消当前步骤，已生成的部分回答仍会保存。
 
-长期记忆由 `memory-sidecar.py`（Mem0 + 内嵌 Qdrant）提供，默认随 CLI / Web 启动时自动拉起：
+长期记忆是一个独立的 HTTP 服务（`memory-sidecar.py`，Mem0 + 内嵌 Qdrant）。agent 侧只依赖 `MemoryPort` 接口：服务不可用时召回返回空、写入丢弃，主流程照常跑。
 
 ```sh
-python -m pip install -r requirements-mem0.txt
-python memory-sidecar.py                      # 手动启动（可选）
+npm run memory              # 手动启动服务（默认端口 8765）
+npm run memory:selftest     # 纯函数自检：脱敏、归一化、作用域、去重
 ```
 
-- 依赖 `OPENAI_API_KEY` 做事实抽取，依赖 `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` 做向量化；向量维度要与 `MEM0_EMBEDDING_DIMS`（默认 2048）一致，换模型时删掉 `data/mem0-qdrant` 重建索引。
-- sidecar 的 stdout/stderr 写入 `data/mem0-sidecar.log`；`/api/health` 里的 `memoryAvailable` 会在首次失败后动态重试，`memoryError` 给出最近一次失败原因。
-- 设 `MEM0_AUTOSTART=false` 可以完全关掉记忆功能。
+- **契约**：`GET /health`、`POST /v1/memories`、`POST /v1/memories/search`、`GET /v1/memories`、`DELETE /v1/memories/{id}`、`POST /v1/memories/clear`、`GET /v1/audit`；旧的 `add` / `list` / `delete` 端点保留兼容。
+- **职责在服务端**：作用域过滤（`user_id` + `project_id`）、相关度阈值、去重（300 秒窗口 + 文本哈希）、TTL（`ttl_days` → `expiration_date`，过期惰性清理）、审计、二次脱敏。客户端只做写入策略和失败开放。
+- **写入**：每轮结束把 turn 摘要（只取 user/assistant、跳过 `[harness]` 状态行）异步写入，不阻塞下一轮；`/remember` 用 `infer=false` 原文直存；过短或纯操作轮直接跳过。
+- **召回**：每轮开始按用户输入检索，`MEMORY_MIN_SCORE` 过滤后再按 `MEMORY_BUDGET_CHARS` 截断，以 `UNTRUSTED LONG-TERM MEMORY` 块作为一次性上下文传入——**不进持久历史**，避免每轮重复计费。
+- **审计**：`data/memory-audit.jsonl` 只记时间、动作、作用域、条数、脱敏计数、文本哈希和耗时，永不记原文；`/v1/audit` 可查。
+- **依赖**：`python -m pip install -r requirements-mem0.txt`；事实抽取用 `OPENAI_API_KEY`，向量化用 `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`，维度要与 `MEM0_EMBEDDING_DIMS`（默认 2048）一致，换模型时删掉 `data/mem0-qdrant` 重建索引。
+- 设 `MEMORY_AUTOSTART=false`（或用旧的 `MEM0_AUTOSTART=false`）可以完全关掉记忆功能；服务日志在 `data/memory-service.log`，`/api/health` 的 `memoryError` 给出最近一次失败原因。
 
 ## 评测
 
