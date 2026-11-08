@@ -124,6 +124,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
   const agent = createAgent(history, input.allowTools !== false && process.env.WEB_ALLOW_TOOLS !== "0");
   const turnMessages: Array<{ role: string; content: string }> = [{ role: "user", content: prompt }];
   const toolNames: string[] = [];
+  const toolResults: Array<{ name: string; output: string }> = [];
   let assistantContent: string | null = null;
 
   // Closing the tab or pressing Stop aborts the HTTP request; forward that to the agent
@@ -146,12 +147,14 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
         if (event.message.content !== null) assistantContent = event.message.content;
       } else if (event.type === "tool_end") {
         toolNames.push(event.toolCall.function.name);
+        // Keep a bounded copy so a reloaded session can still show what the tool said.
+        toolResults.push({ name: event.toolCall.function.name, output: String(event.result ?? "").slice(0, 2000) });
       } else if (event.type === "aborted") {
         assistantContent = event.partial ? `${event.partial}\n\n[Stopped by user]` : "[Stopped by user]";
       }
       sse(res, event.type === "error" ? { type: "error", message: event.error.message } : event);
     }
-    sessionStore.completeTurn(currentNodeId, assistantContent, toolNames);
+    sessionStore.completeTurn(currentNodeId, assistantContent, toolNames, toolResults);
     if (assistantContent) turnMessages.push({ role: "assistant", content: assistantContent });
     // Extraction costs a model call plus embeddings; do not hold the response open for it.
     if (memoryAvailable && summarizeTurn(turnMessages)) {
@@ -160,7 +163,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     sse(res, { type: "done", sessionId, nodeId: currentNodeId, usage: agent.getUsage() });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    sessionStore.completeTurn(currentNodeId, assistantContent ?? `Error: ${message}`, toolNames);
+    sessionStore.completeTurn(currentNodeId, assistantContent ?? `Error: ${message}`, toolNames, toolResults);
     sse(res, { type: "error", message });
   } finally {
     res.end();
@@ -225,6 +228,29 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
   }
   if (path === "/api/chat" && req.method === "POST") {
     await handleChat(req, res);
+    return true;
+  }
+  if (path === "/api/search" && req.method === "GET") {
+    const query = (url.searchParams.get("q") ?? "").trim();
+    if (query.length < 2) {
+      json(res, 200, { query, sessions: [], messages: [], memories: [] });
+      return true;
+    }
+    const sessions = sessionStore.listSessions();
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+    const lowered = query.toLowerCase();
+    const sessionHits = sessions
+      .filter((session) => (session.displayName ?? "").toLowerCase().includes(lowered))
+      .slice(0, 5)
+      .map((session) => ({ id: session.id, name: session.displayName ?? "Session", updatedAt: session.updatedAt, turns: session.nodeCount }));
+    const messageHits = sessionStore.searchTurns(query, 12).map((hit) => ({
+      ...hit,
+      sessionName: byId.get(hit.sessionId)?.displayName ?? "Session",
+    }));
+    const memoryHits = memoryAvailable
+      ? (await memory.recall(query, { limit: 4 })).map((hit) => ({ id: hit.id, text: hit.text, score: hit.score }))
+      : [];
+    json(res, 200, { query, sessions: sessionHits, messages: messageHits, memories: memoryHits });
     return true;
   }
   if (path === "/api/memories" && req.method === "GET") {

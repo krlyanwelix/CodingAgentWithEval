@@ -12,12 +12,26 @@ export interface SessionSummary {
   nodeCount: number;
 }
 
+export interface TurnSearchHit {
+  sessionId: string;
+  nodeId: string;
+  role: "user" | "assistant";
+  snippet: string;
+  updatedAt: string;
+}
+
+export interface ToolTraceEntry {
+  name: string;
+  output: string;
+}
+
 export interface TurnNodeSummary {
   id: string;
   parentId: string | null;
   userContent: string;
   assistantContent: string | null;
   toolNames: string[];
+  toolResults: ToolTraceEntry[];
   createdAt: string;
   updatedAt: string;
 }
@@ -29,6 +43,7 @@ interface TurnRow {
   user_content: string;
   assistant_content: string | null;
   tool_names: string;
+  tool_results?: string;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +55,29 @@ function parseToolNames(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+function parseToolResults(value: string | undefined): ToolTraceEntry[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is { name: string; output?: unknown } => !!item && typeof item === "object" && typeof (item as { name?: unknown }).name === "string")
+      .map((item) => ({ name: item.name, output: typeof item.output === "string" ? item.output : "" }));
+  } catch {
+    return [];
+  }
+}
+
+/** A short, match-centred window so the UI can show why a turn matched. */
+function excerpt(text: string, needle: string, radius = 70): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const at = flat.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0) return flat.slice(0, radius * 2) + (flat.length > radius * 2 ? "…" : "");
+  const start = Math.max(0, at - radius);
+  const end = Math.min(flat.length, at + needle.length + radius);
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`;
 }
 
 /** SQLite persistence boundary. Each tree node is one complete user/assistant turn. */
@@ -65,6 +103,7 @@ export class SessionStore {
         user_content TEXT NOT NULL,
         assistant_content TEXT,
         tool_names TEXT NOT NULL DEFAULT '[]',
+        tool_results TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -74,6 +113,10 @@ export class SessionStore {
     const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
     if (!sessionColumns.some((column) => column.name === "display_name")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN display_name TEXT");
+    }
+    const turnColumns = this.db.prepare("PRAGMA table_info(turns)").all() as Array<{ name: string }>;
+    if (!turnColumns.some((column) => column.name === "tool_results")) {
+      this.db.exec("ALTER TABLE turns ADD COLUMN tool_results TEXT NOT NULL DEFAULT '[]'");
     }
   }
 
@@ -116,9 +159,42 @@ export class SessionStore {
     }));
   }
 
+  /** Full-text-ish search over turn text. SQLite LIKE with escaped wildcards is plenty for a local store. */
+  searchTurns(query: string, limit = 12): TurnSearchHit[] {
+    const needle = query.trim();
+    if (needle.length < 2) return [];
+    const like = `%${needle.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+    const rows = this.db.prepare(`
+      SELECT id, session_id, user_content, assistant_content, updated_at,
+             CASE WHEN user_content LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END AS hit_user
+      FROM turns
+      WHERE user_content LIKE ? ESCAPE '\\' OR assistant_content LIKE ? ESCAPE '\\'
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `).all(like, like, like, limit) as Array<{
+      id: string;
+      session_id: string;
+      user_content: string;
+      assistant_content: string | null;
+      updated_at: string;
+      hit_user: number;
+    }>;
+    return rows.map((row) => {
+      const inUser = row.hit_user === 1;
+      const text = (inUser ? row.user_content : row.assistant_content) ?? "";
+      return {
+        sessionId: row.session_id,
+        nodeId: row.id,
+        role: inUser ? "user" as const : "assistant" as const,
+        snippet: excerpt(text, needle),
+        updatedAt: row.updated_at,
+      };
+    });
+  }
+
   listNodes(sessionId: string): TurnNodeSummary[] {
     const rows = this.db.prepare(`
-      SELECT id, session_id, parent_id, user_content, assistant_content, tool_names, created_at, updated_at
+      SELECT id, session_id, parent_id, user_content, assistant_content, tool_names, tool_results, created_at, updated_at
       FROM turns
       WHERE session_id = ?
       ORDER BY created_at, rowid
@@ -129,6 +205,7 @@ export class SessionStore {
       userContent: row.user_content,
       assistantContent: row.assistant_content,
       toolNames: parseToolNames(row.tool_names),
+      toolResults: parseToolResults(row.tool_results),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -155,14 +232,14 @@ export class SessionStore {
     return id;
   }
 
-  completeTurn(nodeId: string, assistantContent: string | null, toolNames: string[]): void {
+  completeTurn(nodeId: string, assistantContent: string | null, toolNames: string[], toolResults: ToolTraceEntry[] = []): void {
     const now = new Date().toISOString();
     const uniqueToolNames = [...new Set(toolNames.filter(Boolean))];
     const result = this.db.prepare(`
       UPDATE turns
-      SET assistant_content = ?, tool_names = ?, updated_at = ?
+      SET assistant_content = ?, tool_names = ?, tool_results = ?, updated_at = ?
       WHERE id = ?
-    `).run(assistantContent, JSON.stringify(uniqueToolNames), now, nodeId);
+    `).run(assistantContent, JSON.stringify(uniqueToolNames), JSON.stringify(toolResults), now, nodeId);
     if (result.changes !== 1) throw new Error(`Turn not found: ${nodeId}`);
     this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = (SELECT session_id FROM turns WHERE id = ?)").run(now, nodeId);
   }
@@ -185,7 +262,7 @@ export class SessionStore {
     let parentId: string | null = null;
     for (const turn of sourceTurns) {
       const copiedId = this.createTurn(sessionId, parentId, turn.user_content);
-      this.completeTurn(copiedId, turn.assistant_content, parseToolNames(turn.tool_names));
+      this.completeTurn(copiedId, turn.assistant_content, parseToolNames(turn.tool_names), parseToolResults(turn.tool_results));
       parentId = copiedId;
     }
     if (!parentId) throw new Error(`Turn not found: ${nodeId}`);
@@ -204,7 +281,7 @@ export class SessionStore {
       if (seen.has(currentId)) throw new Error(`Cycle detected at turn: ${currentId}`);
       seen.add(currentId);
       const row = this.db.prepare(`
-        SELECT id, session_id, parent_id, user_content, assistant_content, tool_names, created_at, updated_at
+        SELECT id, session_id, parent_id, user_content, assistant_content, tool_names, tool_results, created_at, updated_at
         FROM turns
         WHERE id = ?
       `).get(currentId) as TurnRow | undefined;

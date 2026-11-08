@@ -14,6 +14,11 @@ const state = {
   attachment: null,
   model: "",
   allowTools: localStorage.getItem("codingagentwitheval-allow-tools") !== "0",
+  followTail: true,
+  searchResults: null,
+  searchIndex: -1,
+  searchTimer: 0,
+  searchCursor: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -222,6 +227,117 @@ function toolArgsPreview(call) {
   }
 }
 
+function flattenSearchResults(results) {
+  if (!results) return [];
+  return [
+    ...(results.sessions || []).map((item) => ({ kind: "session", ...item })),
+    ...(results.messages || []).map((item) => ({ kind: "message", ...item })),
+    ...(results.memories || []).map((item) => ({ kind: "memory", ...item })),
+  ];
+}
+
+function closeSearch() {
+  state.searchResults = null;
+  state.searchIndex = -1;
+  const panel = $("search-results");
+  if (!panel) return;
+  panel.hidden = true;
+  panel.replaceChildren();
+}
+
+function highlightSearchRow() {
+  const items = [...$("search-results").querySelectorAll(".search-item")];
+  items.forEach((item, index) => item.classList.toggle("active", index === state.searchIndex));
+  items[state.searchIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+function renderSearchResults(results) {
+  const panel = $("search-results");
+  panel.replaceChildren();
+  const rows = flattenSearchResults(results);
+  const groups = [["session", "Sessions"], ["message", "Messages"], ["memory", "Memories"]];
+  if (!rows.length) {
+    panel.append(element("div", "search-empty", `No matches for “${results.query}”`));
+    state.searchIndex = -1;
+    panel.hidden = false;
+    return;
+  }
+  for (const [kind, title] of groups) {
+    const items = rows.filter((row) => row.kind === kind);
+    if (!items.length) continue;
+    panel.append(element("div", "search-group", title));
+    for (const row of items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "search-item";
+      const headline = kind === "session" ? row.name : kind === "message" ? `${row.sessionName} · ${row.role}` : "Memory";
+      const detail = kind === "session" ? `${row.turns} turns` : kind === "message" ? row.snippet : row.text;
+      button.append(element("span", "search-item-title", headline), element("span", "search-item-snippet", detail));
+      button.addEventListener("click", () => { void openSearchHit(row); });
+      panel.append(button);
+    }
+  }
+  state.searchIndex = 0;
+  panel.hidden = false;
+  highlightSearchRow();
+}
+
+async function openSearchHit(row) {
+  closeSearch();
+  $("global-search").value = "";
+  state.sessionFilter = "";
+  renderSessions();
+  if (row.kind === "session") {
+    await selectSession(row.id);
+    return;
+  }
+  if (row.kind === "message") {
+    await selectSession(row.sessionId, row.nodeId);
+    return;
+  }
+  setDrawer("context", true);
+  memoryQueryEl.value = String(row.text || "").slice(0, 60);
+  await loadMemories(memoryQueryEl.value);
+  memoryQueryEl.focus();
+}
+
+async function runSearch(query) {
+  const cursor = ++state.searchCursor;
+  if (query.length < 2) {
+    closeSearch();
+    return;
+  }
+  try {
+    const data = await request(`/api/search?q=${encodeURIComponent(query)}`);
+    if (cursor !== state.searchCursor) return;
+    state.searchResults = data;
+    if (document.activeElement === $("global-search")) renderSearchResults(data);
+  } catch (error) {
+    if (cursor === state.searchCursor) notify(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function messageDistanceFromBottom() {
+  return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+}
+
+function updateJumpButton() {
+  const button = $("jump-latest");
+  if (button) button.hidden = state.followTail || messagesEl.scrollHeight === 0;
+}
+
+function followTail() {
+  state.followTail = true;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  updateJumpButton();
+}
+
+/** Streaming only pulls the view down while the reader is already at the bottom. */
+function scrollIfFollowing() {
+  if (state.followTail) messagesEl.scrollTop = messagesEl.scrollHeight;
+  updateJumpButton();
+}
+
 function notify(message) {
   const toast = $("toast");
   if (!toast) return;
@@ -332,25 +448,30 @@ async function loadMemories(query = "") {
 
 function showEmptyState() {
   messagesEl.replaceChildren();
+  state.followTail = true;
+  updateJumpButton();
   const empty = document.createElement("div");
   empty.className = "empty-state";
-  const icon = document.createElement("div");
-  icon.className = "empty-icon";
-  icon.setAttribute("aria-hidden", "true");
-  icon.textContent = "+";
   const heading = document.createElement("h1");
-  heading.textContent = "What can I help with?";
+  heading.textContent = "A coding agent in this workspace";
   const copy = document.createElement("p");
   copy.textContent = state.model
-    ? `${state.model} is ready. It can read, edit and run code in this workspace.`
+    ? `${state.model} reads files, edits them, runs commands and checks its own work before answering.`
     : "Start a conversation with your agent.";
+  const facts = element("dl", "empty-facts");
+  const rows = [
+    ["Tools", "read · write · edit · glob · grep · bash"],
+    ["Context", state.contextLimit ? `${Math.round(state.contextLimit / 1000)}K tokens, compacted on overflow` : "budgeted per turn"],
+    ["Shortcuts", "Ctrl/⌘ K to search · Ctrl/⌘ J for a new session"],
+  ];
+  for (const [term, detail] of rows) {
+    facts.append(element("dt", null, term), element("dd", null, detail));
+  }
   const suggestions = document.createElement("div");
   suggestions.className = "suggestions";
   const ideas = [
-    ["Explain this project", "Explain the structure of this project and tell me where to start."],
-    ["Fix a failing test", "Run the test suite and fix whatever fails."],
-    ["Review the README", "Review README.md against the code and list what is wrong or missing."],
-    ["Add a small feature", "Pick one small improvement this project is missing and implement it."],
+    ["Find where a setting is read", "Find where the model settings are read and explain the fallback order."],
+    ["Run the tests and fix a failure", "Run the test suite, then fix the first failing test and re-run it."],
   ];
   for (const [label, prompt] of ideas) {
     const chip = element("button", "suggestion", label);
@@ -362,7 +483,7 @@ function showEmptyState() {
     });
     suggestions.append(chip);
   }
-  empty.append(icon, heading, copy, suggestions);
+  empty.append(heading, copy, facts, suggestions);
   messagesEl.append(empty);
 }
 
@@ -373,7 +494,7 @@ function langOf(text) {
   return hits / Math.max(sample.length, 1) > 0.15 ? "zh-CN" : "en";
 }
 
-function addMessage(role, content = "", tools = []) {
+function addMessage(role, content = "", tools = [], toolResults = []) {
   const empty = messagesEl.querySelector(".empty-state");
   if (empty) empty.remove();
   const row = document.createElement("div");
@@ -396,6 +517,8 @@ function addMessage(role, content = "", tools = []) {
     }
   };
   setTools(tools);
+  // A saved tool entry already names itself; showing the chip row too reads as a duplicate.
+  if (toolResults.length) toolList.hidden = true;
   const toolLog = element("div", "tool-log");
   const bubble = element("div", "message-bubble");
   if (role === "assistant") bubble.classList.add("markdown");
@@ -408,7 +531,7 @@ function addMessage(role, content = "", tools = []) {
         frame = 0;
         bubble.lang = langOf(text);
         bubble.replaceChildren(renderMarkdown(text));
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+        scrollIfFollowing();
       });
     };
     api.notice = (message) => {
@@ -425,7 +548,7 @@ function addMessage(role, content = "", tools = []) {
       const output = element("pre", "tool-entry-output", "");
       entry.append(summary, output);
       toolLog.append(entry);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      scrollIfFollowing();
       api.toolRecords.set(toolCall?.id, { status, output });
       return entry;
     };
@@ -436,9 +559,41 @@ function addMessage(role, content = "", tools = []) {
       const failed = /^\s*(Tool error|Error)/.test(text);
       record.status.textContent = failed ? "error" : "done";
       record.status.classList.toggle("error", failed);
-      record.output.textContent = text.length > 4000 ? `${text.slice(0, 4000)}\n... (${text.length} characters)` : text;
+      // The backend already caps a tool result near 4k chars; showing a short
+      // digest keeps the transcript scannable and "Show all" is still honest.
+      const limit = 1200;
+      const truncated = text.length > limit;
+      record.output.textContent = truncated ? `${text.slice(0, limit)}\n…` : text;
+      const actions = element("div", "tool-entry-actions");
+      if (truncated) {
+        const expand = element("button", "text-link", `Show all (${text.length.toLocaleString()} chars)`);
+        expand.type = "button";
+        expand.addEventListener("click", () => {
+          record.output.textContent = text;
+          expand.remove();
+        });
+        actions.append(expand);
+      }
+      const copy = element("button", "text-link", "Copy");
+      copy.type = "button";
+      copy.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(text); copy.textContent = "Copied"; }
+        catch { copy.textContent = "Failed"; }
+        window.setTimeout(() => { copy.textContent = "Copy"; }, 1400);
+      });
+      actions.append(copy);
+      record.output.after(actions);
     };
     if (content) api.setText(content);
+    if (toolResults.length) {
+      // Replay saved tool output through the same path a live turn uses, so a
+      // reloaded session keeps its expand/copy affordances.
+      toolResults.forEach((entry, index) => {
+        const call = { id: `saved-${index}`, type: "function", function: { name: entry.name, arguments: "{}" } };
+        api.addTool(call);
+        api.finishTool(call, entry.output);
+      });
+    }
   } else {
     bubble.lang = langOf(content);
     bubble.textContent = content;
@@ -446,7 +601,7 @@ function addMessage(role, content = "", tools = []) {
   messageContent.append(label, toolList, toolLog, bubble);
   row.append(messageContent);
   messagesEl.append(row);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollIfFollowing();
   return api;
 }
 
@@ -466,15 +621,22 @@ function nodePath(nodes, nodeId) {
 
 function renderCurrentPath() {
   renderContextPath();
+  if (!state.nodes.length || !state.nodeId) showEmptyState();
+}
+
+/** Rebuilds the transcript from history — only on session/path switches, never mid-turn. */
+function renderTranscript() {
   if (!state.nodes.length || !state.nodeId) {
     showEmptyState();
     return;
   }
+  state.followTail = true;
   messagesEl.replaceChildren();
   for (const node of nodePath(state.nodes, state.nodeId)) {
     addMessage("user", node.userContent);
-    if (node.assistantContent !== null) addMessage("assistant", node.assistantContent, node.toolNames || []);
+    if (node.assistantContent !== null) addMessage("assistant", node.assistantContent, node.toolNames || [], node.toolResults || []);
   }
+  followTail();
 }
 
 function renderContextPath() {
@@ -507,22 +669,24 @@ function renderContextPath() {
   $("session-path").textContent = path.length > 1 ? `${path.length} turns` : "main branch";
 }
 
-async function loadNodes(preferredNodeId = null) {
+async function loadNodes(preferredNodeId = null, options = {}) {
   const data = await request(`/api/sessions/${encodeURIComponent(state.sessionId)}/nodes`);
   state.nodes = data.nodes || [];
   const requested = preferredNodeId && state.nodes.some((node) => node.id === preferredNodeId) ? preferredNodeId : null;
   state.nodeId = requested || state.nodes[state.nodes.length - 1]?.id || null;
   renderCurrentPath();
+  if (options.transcript) renderTranscript();
 }
 
 async function selectSession(id, preferredNodeId = null) {
   hideSessionMenu();
   state.sessionId = id;
+  state.followTail = true;
   const session = state.sessions.find((item) => item.id === id);
   $("session-title").textContent = session ? sessionName(session) : "Session";
   $("session-meta").textContent = "Ready";
   renderSessions();
-  await loadNodes(preferredNodeId);
+  await loadNodes(preferredNodeId, { transcript: true });
   sendEl.disabled = false;
   setDrawer("sessions", false);
 }
@@ -1084,14 +1248,51 @@ $("allow-tools").addEventListener("change", (event) => {
 });
 $("new-session").addEventListener("click", openSessionDialog);
 $("refresh").addEventListener("click", () => refreshSessions());
+messagesEl.addEventListener("scroll", () => {
+  state.followTail = messageDistanceFromBottom() < 120;
+  updateJumpButton();
+}, { passive: true });
+$("jump-latest").addEventListener("click", followTail);
 $("global-search").addEventListener("input", (event) => {
-  state.sessionFilter = event.currentTarget.value.trim();
+  const query = event.currentTarget.value.trim();
+  state.sessionFilter = query;
   renderSessions();
+  window.clearTimeout(state.searchTimer);
+  state.searchTimer = window.setTimeout(() => { void runSearch(query); }, 180);
 });
 $("global-search").addEventListener("keydown", (event) => {
-  if (event.key !== "Enter") return;
-  const match = state.sessions.find((session) => `${sessionName(session)} ${session.lastMessage || ""}`.toLowerCase().includes(state.sessionFilter.toLowerCase()));
-  if (match) selectSession(match.id);
+  const panel = $("search-results");
+  const open = !panel.hidden && state.searchResults;
+  if (event.key === "Escape") {
+    closeSearch();
+    event.currentTarget.blur();
+    return;
+  }
+  if (!open) {
+    if (event.key !== "Enter") return;
+    const match = state.sessions.find((session) => `${sessionName(session)} ${session.lastMessage || ""}`.toLowerCase().includes(state.sessionFilter.toLowerCase()));
+    if (match) selectSession(match.id);
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const total = panel.querySelectorAll(".search-item").length;
+    if (!total) return;
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    state.searchIndex = (state.searchIndex + step + total) % total;
+    highlightSearchRow();
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    panel.querySelectorAll(".search-item")[state.searchIndex]?.click();
+  }
+});
+$("global-search").addEventListener("focus", () => {
+  if (state.searchResults && $("global-search").value.trim().length >= 2) renderSearchResults(state.searchResults);
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".global-search-wrap")) closeSearch();
 });
 $("mobile-nav-toggle").addEventListener("click", () => setDrawer("sessions", !$("sessions-drawer").classList.contains("open")));
 $("mobile-context-toggle").addEventListener("click", () => setDrawer("context", !$("context-panel").classList.contains("open")));

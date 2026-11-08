@@ -13,8 +13,9 @@
       <header class="globalbar">
         <a class="brand" href="/" aria-label="Agent home"><span class="brand-name">Agent</span></a>
         <div class="global-search-wrap">
-          <input id="global-search" type="search" placeholder="Search sessions, memories and tool output" aria-label="Search sessions, memories and tool output" />
+          <input id="global-search" type="search" placeholder="Search sessions, messages and memories" aria-label="Search sessions, messages and memories" autocomplete="off" />
           <kbd id="search-kbd">⌘ K</kbd>
+          <div id="search-results" class="search-results" role="listbox" aria-label="Search results" hidden></div>
         </div>
         <div class="global-tools">
           <button class="icon-button mobile-nav-trigger" id="mobile-nav-toggle" type="button" aria-label="Open sessions">Sessions</button>
@@ -51,11 +52,12 @@
         </header>
         <div class="thread-toolbar"><span class="thread-label">Conversation</span><button class="quiet-button" id="export-session" type="button">Export session</button></div>
         <section id="messages" class="messages" aria-live="polite" aria-label="Conversation messages"></section>
+        <button id="jump-latest" class="jump-latest" type="button" hidden>Jump to latest</button>
         <form id="composer" class="composer">
           <textarea id="input" rows="1" placeholder="Ask Agent…" aria-label="Message Agent"></textarea>
           <div id="attachments" class="attachments" hidden></div>
           <div class="composer-footer">
-            <div class="composer-tools"><button id="attach-file" class="icon-button" type="button" aria-label="Attach a text file">＋</button><input id="attachment-input" class="sr-only" type="file" tabindex="-1" aria-hidden="true" /><label class="tool-toggle" title="Let the agent run shell commands in this workspace"><input id="allow-tools" type="checkbox" checked /><span>Run commands</span></label><span class="composer-hint">Enter to send · Shift + Enter for a new line</span></div>
+            <div class="composer-tools"><button id="attach-file" class="text-link" type="button">Attach</button><input id="attachment-input" class="sr-only" type="file" tabindex="-1" aria-hidden="true" /><label class="tool-toggle" title="Let the agent run shell commands in this workspace"><input id="allow-tools" type="checkbox" checked /><span>Run commands</span></label><span class="composer-hint">Enter to send · Shift + Enter for a new line</span></div>
             <div class="composer-submit"><span class="composer-model"><span id="composer-model-name">Model</span></span><button id="stop" class="send-button stop" type="button" hidden>Stop</button><button id="send" class="send-button" type="submit">Send</button></div>
           </div>
         </form>
