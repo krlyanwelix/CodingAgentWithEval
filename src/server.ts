@@ -183,6 +183,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       contextLimit,
       memoryAvailable,
       memoryError,
+      workspace: projectRoot,
     });
     return true;
   }

@@ -1160,6 +1160,12 @@ request("/api/health").then((health) => {
   $("health-dot").setAttribute("aria-label", healthLabel);
   $("health-dot").title = healthLabel;
   setModelLabel(health.model, health.contextLimit);
+  const workspaceEl = $("workspace-name");
+  if (workspaceEl && health.workspace) {
+    const parts = String(health.workspace).split(/[\\/]/).filter(Boolean);
+    workspaceEl.textContent = parts[parts.length - 1] || "Workspace";
+    workspaceEl.title = health.workspace;
+  }
   if (document.querySelector(".empty-state")) showEmptyState();
 }).catch(() => {
   $("health-text").textContent = "Offline";
@@ -1174,9 +1180,15 @@ document.querySelectorAll("[data-panel]").forEach((button) => button.addEventLis
     setDrawer("context", true);
     memoryPanel.open = true;
     if (!state.memoriesLoaded) loadMemories().catch(() => notify("Memories are unavailable right now."));
-  } else notify(`${button.textContent.trim()} will be available here.`);
+    return;
+  }
+  const section = document.querySelector(".capability-section");
+  setDrawer("context", true);
+  if (!section) return;
+  section.scrollIntoView({ block: "center", behavior: "smooth" });
+  section.classList.add("is-target");
+  setTimeout(() => section.classList.remove("is-target"), 1200);
 }));
-$("manage-capabilities").addEventListener("click", () => notify("Skills and tools are configured for this agent."));
 const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 const modKey = isMac ? "\u2318" : "Ctrl";
 $("search-kbd").textContent = `${modKey} K`;

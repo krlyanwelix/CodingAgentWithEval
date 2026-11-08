@@ -35,12 +35,11 @@
         <div id="sessions" class="sessions" aria-label="Sessions"></div>
         <div class="workspace-links">
           <div class="sidebar-section-heading"><span>Workspace</span></div>
-          <button class="nav-item" type="button" data-panel="files"><span class="nav-icon folder-icon"></span>Project files</button>
           <button class="nav-item" type="button" data-panel="skills"><span class="nav-icon spark-icon">✳</span>Skills</button>
           <button class="nav-item" type="button" data-panel="tools"><span class="nav-icon tool-icon">⌘</span>Tools</button>
           <button class="nav-item" type="button" data-panel="memory"><span class="nav-icon memory-icon">◉</span>Long-term memory</button>
         </div>
-        <div class="sidebar-foot"><span class="foot-avatar">S</span><span><strong>Workspace owner</strong><small>Personal plan</small></span><span class="foot-more">···</span></div>
+        <div class="sidebar-foot"><span class="foot-avatar" aria-hidden="true">▧</span><span><strong id="workspace-name">Workspace</strong><small>Local project</small></span></div>
       </aside>
 
       <section class="workspace" aria-label="Conversation workspace">
@@ -72,7 +71,7 @@
         <div class="context-header"><div><h2>Context</h2></div><button class="icon-button context-close" id="close-context" type="button" aria-label="Close context">×</button></div>
         <section class="context-section path-section"><div class="context-section-title"><h3>Session path</h3><button class="text-link" id="context-tree" type="button">View tree</button></div><div class="path-list" id="path-list"><div class="path-entry"><span class="path-node current"></span><span><strong>Current conversation</strong><small>main branch</small></span></div></div></section>
         <section class="context-section run-section"><div class="context-section-title"><h3>Run status</h3></div><div class="run-status" id="run-status" data-state="idle"><span class="run-status-icon" id="run-status-icon" aria-hidden="true">✓</span><span><strong id="run-status-title">Ready to work</strong><small id="run-status-detail">Agent is available</small></span></div><div class="run-detail"><span>Model</span><strong id="run-model">—</strong></div><div class="run-detail"><span>Context</span><strong id="run-context">—</strong></div><div class="run-detail"><span>Tools used</span><strong id="tool-count">—</strong></div></section>
-        <section class="context-section capability-section"><div class="context-section-title"><h3>Capabilities</h3><button class="text-link" id="manage-capabilities" type="button">Manage</button></div><div class="capability-row"><span class="capability-mark skill-mark">✳</span><span><strong>Skills</strong><small>Available for this session</small></span><span class="capability-chevron">›</span></div><div class="capability-row"><span class="capability-mark tool-mark">⌘</span><span><strong>Tools</strong><small>Connected to your agent</small></span><span class="capability-chevron">›</span></div></section>
+        <section class="context-section capability-section"><div class="context-section-title"><h3 title="Skills live in skills/, tools in tools/">Capabilities</h3></div><div class="capability-row"><span class="capability-mark skill-mark">✳</span><span><strong>Skills</strong><small>Available for this session</small></span><span class="capability-chevron">›</span></div><div class="capability-row"><span class="capability-mark tool-mark">⌘</span><span><strong>Tools</strong><small>Connected to your agent</small></span><span class="capability-chevron">›</span></div></section>
         <details id="memory-panel" class="memory-section" open>
           <summary><span class="summary-title">Memories in context</span><span class="memory-count" id="memory-count">–</span><span class="memory-chevron"></span></summary>
           <div class="memory-panel-body">
