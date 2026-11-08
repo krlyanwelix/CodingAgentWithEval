@@ -297,11 +297,15 @@ function renderMemories() {
     item.className = "memory-item";
     const content = document.createElement("div");
     content.className = "memory-text";
-    content.textContent = memory.text || memory.memory || memory.content || "";
+    const memoryText = memory.text || memory.memory || memory.content || "";
+    content.lang = langOf(memoryText);
+    content.textContent = memoryText;
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "memory-delete text-button compact";
-    remove.title = "Delete memory";
+    const memoryLabel = (memory.text || memory.memory || memory.content || "").trim().slice(0, 60);
+    remove.title = memoryLabel ? `Delete memory: ${memoryLabel}` : "Delete memory";
+    remove.setAttribute("aria-label", remove.title);
     remove.textContent = "Delete";
     remove.addEventListener("click", async () => {
       remove.disabled = true;
@@ -362,6 +366,13 @@ function showEmptyState() {
   messagesEl.append(empty);
 }
 
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
+function langOf(text) {
+  const sample = String(text ?? "").slice(0, 240);
+  const hits = (sample.match(CJK) || []).length;
+  return hits / Math.max(sample.length, 1) > 0.15 ? "zh-CN" : "en";
+}
+
 function addMessage(role, content = "", tools = []) {
   const empty = messagesEl.querySelector(".empty-state");
   if (empty) empty.remove();
@@ -401,6 +412,7 @@ function addMessage(role, content = "", tools = []) {
       if (frame) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         frame = 0;
+        bubble.lang = langOf(text);
         bubble.replaceChildren(renderMarkdown(text));
         messagesEl.scrollTop = messagesEl.scrollHeight;
       });
@@ -434,6 +446,7 @@ function addMessage(role, content = "", tools = []) {
     };
     if (content) api.setText(content);
   } else {
+    bubble.lang = langOf(content);
     bubble.textContent = content;
   }
   messageContent.append(label, toolList, toolLog, bubble);
@@ -902,12 +915,23 @@ function exportCurrentSession() {
   notify("Conversation exported.");
 }
 
+function setRunStatus(kind, title, detail) {
+  const box = $("run-status");
+  if (!box) return;
+  box.dataset.state = kind;
+  $("run-status-icon").textContent = kind === "error" ? "!" : kind === "working" ? "•" : "✓";
+  $("run-status-title").textContent = title;
+  $("run-status-detail").textContent = detail;
+}
+
 function setBusy(busy) {
   state.busy = busy;
   sendEl.disabled = busy;
   sendEl.hidden = busy;
   $("stop").hidden = !busy;
   inputEl.setAttribute("aria-busy", String(busy));
+  if (busy) setRunStatus("working", "Working", "Streaming the model response");
+  else setRunStatus("idle", "Ready to work", "Agent is available");
 }
 
 function clearAttachment() {
@@ -1000,8 +1024,11 @@ async function sendMessage(event) {
           if (toolName) toolNames.push(toolName);
           assistantMessage.setTools(toolNames);
           assistantMessage.addTool(data.toolCall);
+          $("tool-count").textContent = String(new Set(toolNames).size);
+          setRunStatus("working", "Running a tool", toolName ? toolName + "…" : "Waiting for the tool result");
         } else if (data.type === "tool_end") {
           assistantMessage.finishTool(data.toolCall, data.result);
+          setRunStatus("working", "Working", "Reading the tool result");
           if (typeof data.result === "string" && data.result.startsWith("Tool execution cancelled")) {
             assistantMessage.notice("This tool needs permission and was denied. Turn on “Run commands” above the input and try again.");
           }
@@ -1009,6 +1036,7 @@ async function sendMessage(event) {
           assistantMessage.notice(data.message);
         } else if (data.type === "error") {
           assistantMessage.notice(data.message);
+          setRunStatus("error", "Needs attention", String(data.message).slice(0, 80));
         } else if (data.type === "aborted") {
           aborted = true;
           streamed = data.partial || streamed;
@@ -1025,6 +1053,7 @@ async function sendMessage(event) {
     } else {
       assistantMessage.setText(`**Request failed.** ${error instanceof Error ? error.message : String(error)}`);
       $("session-meta").textContent = "Error";
+      setRunStatus("error", "Request failed", (error instanceof Error ? error.message : String(error)).slice(0, 80));
       notify("The request failed.");
     }
   } finally {
@@ -1126,12 +1155,17 @@ function setModelLabel(model, contextLimit) {
 }
 request("/api/health").then((health) => {
   $("health-dot").classList.toggle("ok", health.ok);
-  $("health-text").textContent = health.memoryAvailable ? "Online · memory on" : "Online · memory off";
+  const healthLabel = health.memoryAvailable ? "Online · memory on" : "Online · memory off";
+  $("health-text").textContent = healthLabel;
+  $("health-dot").setAttribute("aria-label", healthLabel);
+  $("health-dot").title = healthLabel;
   setModelLabel(health.model, health.contextLimit);
   if (document.querySelector(".empty-state")) showEmptyState();
 }).catch(() => {
   $("health-text").textContent = "Offline";
   $("health-dot").classList.remove("ok");
+  $("health-dot").setAttribute("aria-label", "Offline");
+  $("health-dot").title = "Offline";
 });
 
 document.querySelectorAll("[data-panel]").forEach((button) => button.addEventListener("click", () => {
@@ -1143,10 +1177,18 @@ document.querySelectorAll("[data-panel]").forEach((button) => button.addEventLis
   } else notify(`${button.textContent.trim()} will be available here.`);
 }));
 $("manage-capabilities").addEventListener("click", () => notify("Skills and tools are configured for this agent."));
+const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+const modKey = isMac ? "\u2318" : "Ctrl";
+$("search-kbd").textContent = `${modKey} K`;
+$("new-session-kbd").textContent = `${modKey} J`;
 document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     $("global-search").focus();
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+    event.preventDefault();
+    $("new-session").click();
   }
   if (event.key === "Escape") {
     setDrawer("sessions", false);
@@ -1225,6 +1267,8 @@ inputEl.addEventListener("input", () => {
   inputEl.style.height = `${Math.min(inputEl.scrollHeight, 150)}px`;
 });
 inputEl.addEventListener("keydown", (event) => {
+  // An IME candidate window owns Enter in Chinese, Japanese and Korean input.
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     $("composer").requestSubmit();

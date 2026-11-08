@@ -5,3 +5,6 @@ data/
 *.lance/
 __pycache__/
 .mem0/
+
+# impeccable audit evidence
+.impeccable/

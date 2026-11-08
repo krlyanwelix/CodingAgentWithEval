@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f6f5" />
+    <meta name="theme-color" content="#f7f6f3" />
     <title>CodingAgentWithEval</title>
     <link rel="icon" href="/agent-avatar.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
@@ -18,7 +18,7 @@
         <div class="global-search-wrap">
           <span class="search-glyph" aria-hidden="true"></span>
           <input id="global-search" type="search" placeholder="Search sessions, memories and tool output" aria-label="Search sessions, memories and tool output" />
-          <kbd>⌘ K</kbd>
+          <kbd id="search-kbd">⌘ K</kbd>
         </div>
         <div class="global-tools">
           <button class="icon-button mobile-nav-trigger" id="mobile-nav-toggle" type="button" aria-label="Open sessions">☰</button>
@@ -30,7 +30,7 @@
       </header>
 
       <aside class="sidebar" id="sessions-drawer" aria-label="Workspace navigation">
-        <button id="new-session" class="new-session" type="button"><span class="plus-mark">＋</span> New session <kbd>⌘ J</kbd></button>
+        <button id="new-session" class="new-session" type="button"><span class="plus-mark">＋</span> New session <kbd id="new-session-kbd">⌘ J</kbd></button>
         <div class="sidebar-section-heading"><span>Recent sessions</span><button id="refresh" class="icon-button subtle" type="button" title="Refresh sessions" aria-label="Refresh sessions">↻</button></div>
         <div id="sessions" class="sessions" aria-label="Sessions"></div>
         <div class="workspace-links">
@@ -46,7 +46,7 @@
       <section class="workspace" aria-label="Conversation workspace">
         <header class="topbar">
           <div class="conversation-heading">
-            <div class="breadcrumb"><span>Sessions</span><span class="breadcrumb-sep">/</span><strong id="session-title">Loading session…</strong></div>
+            <div class="breadcrumb"><span>Sessions</span><span class="breadcrumb-sep">/</span><h1 id="session-title" class="session-title">Loading session…</h1></div>
             <div class="meta-line"><span class="branch-symbol">⑂</span><span id="session-meta">Ready</span><span class="meta-divider"></span><span id="session-path">main branch</span></div>
           </div>
           <div class="topbar-actions">
@@ -61,7 +61,7 @@
           <textarea id="input" rows="1" placeholder="Ask CodingAgentWithEval to build, inspect or explain…" aria-label="Message CodingAgentWithEval"></textarea>
           <div id="attachments" class="attachments" hidden></div>
           <div class="composer-footer">
-            <div class="composer-tools"><button id="attach-file" class="icon-button" type="button" aria-label="Attach a text file">＋</button><input id="attachment-input" class="sr-only" type="file" /><label class="tool-toggle" title="Let the agent run shell commands in this workspace"><input id="allow-tools" type="checkbox" checked /><span>Run commands</span></label><span class="composer-hint">Enter to send · Shift + Enter for a new line</span></div>
+            <div class="composer-tools"><button id="attach-file" class="icon-button" type="button" aria-label="Attach a text file">＋</button><input id="attachment-input" class="sr-only" type="file" tabindex="-1" aria-hidden="true" /><label class="tool-toggle" title="Let the agent run shell commands in this workspace"><input id="allow-tools" type="checkbox" checked /><span>Run commands</span></label><span class="composer-hint">Enter to send · Shift + Enter for a new line</span></div>
             <div class="composer-submit"><span class="composer-model"><span id="composer-model-name">Model</span><span class="chevron-down"></span></span><button id="stop" class="send-button stop" type="button" hidden><span>Stop</span><span class="send-arrow">■</span></button><button id="send" class="send-button" type="submit"><span>Send</span><span class="send-arrow">↑</span></button></div>
           </div>
         </form>
@@ -69,8 +69,10 @@
       </section>
 
       <aside class="context-sidebar" id="context-panel" aria-label="Session context">
-        <div class="context-header"><div><span class="context-overline">SESSION DETAILS</span><h2>Context</h2></div><button class="icon-button context-close" id="close-context" type="button" aria-label="Close context">×</button></div>
+        <div class="context-header"><div><h2>Context</h2></div><button class="icon-button context-close" id="close-context" type="button" aria-label="Close context">×</button></div>
         <section class="context-section path-section"><div class="context-section-title"><h3>Session path</h3><button class="text-link" id="context-tree" type="button">View tree</button></div><div class="path-list" id="path-list"><div class="path-entry"><span class="path-node current"></span><span><strong>Current conversation</strong><small>main branch</small></span></div></div></section>
+        <section class="context-section run-section"><div class="context-section-title"><h3>Run status</h3></div><div class="run-status" id="run-status" data-state="idle"><span class="run-status-icon" id="run-status-icon" aria-hidden="true">✓</span><span><strong id="run-status-title">Ready to work</strong><small id="run-status-detail">Agent is available</small></span></div><div class="run-detail"><span>Model</span><strong id="run-model">—</strong></div><div class="run-detail"><span>Context</span><strong id="run-context">—</strong></div><div class="run-detail"><span>Tools used</span><strong id="tool-count">—</strong></div></section>
+        <section class="context-section capability-section"><div class="context-section-title"><h3>Capabilities</h3><button class="text-link" id="manage-capabilities" type="button">Manage</button></div><div class="capability-row"><span class="capability-mark skill-mark">✳</span><span><strong>Skills</strong><small>Available for this session</small></span><span class="capability-chevron">›</span></div><div class="capability-row"><span class="capability-mark tool-mark">⌘</span><span><strong>Tools</strong><small>Connected to your agent</small></span><span class="capability-chevron">›</span></div></section>
         <details id="memory-panel" class="memory-section" open>
           <summary><span class="summary-title">Memories in context</span><span class="memory-count" id="memory-count">–</span><span class="memory-chevron"></span></summary>
           <div class="memory-panel-body">
@@ -79,8 +81,6 @@
             <div id="memories" class="memories"><div class="memory-empty">Memories appear here when available.</div></div>
           </div>
         </details>
-        <section class="context-section run-section"><div class="context-section-title"><h3>Run status</h3></div><div class="run-status"><span class="run-status-icon">✓</span><span><strong>Ready to work</strong><small>Agent is available</small></span></div><div class="run-detail"><span>Model</span><strong id="run-model">—</strong></div><div class="run-detail"><span>Context</span><strong id="run-context">—</strong></div><div class="run-detail"><span>Tools used</span><strong id="tool-count">—</strong></div></section>
-        <section class="context-section capability-section"><div class="context-section-title"><h3>Capabilities</h3><button class="text-link" id="manage-capabilities" type="button">Manage</button></div><div class="capability-row"><span class="capability-mark skill-mark">✳</span><span><strong>Skills</strong><small>Available for this session</small></span><span class="capability-chevron">›</span></div><div class="capability-row"><span class="capability-mark tool-mark">⌘</span><span><strong>Tools</strong><small>Connected to your agent</small></span><span class="capability-chevron">›</span></div></section>
         <button class="context-bottom-link" id="context-export" type="button">Export conversation <span>↗</span></button>
       </aside>
       <button id="drawer-scrim" class="drawer-scrim" type="button" aria-label="Close navigation"></button>
