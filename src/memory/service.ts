@@ -284,7 +284,8 @@ export class MemoryService implements MemoryPort {
 
   async forget(id: string): Promise<void> {
     if (!(await this.refresh())) throw new Error("memory service unavailable");
-    await this.request(`/v1/memories/${encodeURIComponent(id)}`, { user_id: this.userId }, "DELETE");
+    const params = new URLSearchParams({ user_id: this.userId });
+    await this.request(`/v1/memories/${encodeURIComponent(id)}?${params.toString()}`, undefined, "DELETE");
   }
 
   async clear(): Promise<void> {

@@ -460,8 +460,23 @@ def delete(memory_id: str, user_id: str = "local-user") -> dict[str, Any]:
 
 @app.post("/v1/memories/clear")
 def clear(request: ClearRequest) -> dict[str, Any]:
+    # Clearing one checkout must not wipe another's memories, and must not touch
+    # global (project-less) entries that every checkout can still read.
+    if request.project_id:
+        raw = backend.call(lambda: backend.require().get_all(filters={"user_id": request.user_id}))
+        items = raw.get("results", []) if isinstance(raw, dict) else raw
+        removed = 0
+        for item in items or []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            if (item.get("metadata") or {}).get("project_id") != request.project_id:
+                continue
+            backend.call(lambda memory_id=item["id"]: backend.require().delete(memory_id))
+            removed += 1
+        audit("clear", user_id=request.user_id, project_id=request.project_id, count=removed)
+        return {"result": {"message": "Memories deleted successfully!"}, "count": removed}
     result = backend.call(lambda: backend.require().delete_all(user_id=request.user_id))
-    audit("clear", user_id=request.user_id, project_id=request.project_id)
+    audit("clear", user_id=request.user_id, project_id=None)
     return {"result": result}
 
 

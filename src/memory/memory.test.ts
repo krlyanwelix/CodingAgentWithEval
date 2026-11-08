@@ -128,6 +128,20 @@ test("recall maps service hits and sends the scope", async () => {
   assert.equal(search?.body?.budget_chars, 900);
 });
 
+test("forget scopes the delete through the query string", async () => {
+  const { impl, calls } = fakeFetch(async (url) => {
+    if (url.endsWith("/health")) return { body: { status: "ok" } };
+    return { body: { deleted: "m1" } };
+  });
+  const service = newService(impl);
+  await service.start();
+  await service.forget("m1");
+  const del = calls.find((call) => call.url.includes("/v1/memories/m1"));
+  assert.ok(del, "expected a delete request");
+  assert.match(del.url, /[?&]user_id=user-1/);
+  assert.equal(del.body, undefined, "delete must not send a body the server reads as query params");
+});
+
 test("recall fails open when the service is down", async () => {
   const { impl } = fakeFetch(async () => {
     throw new Error("ECONNREFUSED");
