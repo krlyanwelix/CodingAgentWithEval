@@ -115,6 +115,14 @@ function inlineNodes(text) {
   return nodes;
 }
 
+function diffLineKind(line) {
+  if (/^(\+\+\+|---)\s/.test(line)) return "diff-meta";
+  if (line.startsWith("@@")) return "diff-hunk";
+  if (line.startsWith("+")) return "diff-add";
+  if (line.startsWith("-")) return "diff-del";
+  return "";
+}
+
 function codeBlock(code, language) {
   const wrap = element("div", "md-codeblock");
   const head = element("div", "md-codeblock-head");
@@ -133,10 +141,90 @@ function codeBlock(code, language) {
   head.append(copy);
   const pre = document.createElement("pre");
   const codeEl = document.createElement("code");
-  codeEl.textContent = code;
+  const lang = String(language || "").toLowerCase();
+  if (lang === "diff" || lang === "patch") {
+    // Line-level tint so a patch reads as a patch, not as prose in a <pre>.
+    for (const line of code.split("\n")) {
+      const row = element("span", "diff-line");
+      const kind = diffLineKind(line);
+      if (kind) row.classList.add(kind);
+      row.textContent = line === "" ? " " : line;
+      codeEl.append(row);
+    }
+  } else {
+    codeEl.textContent = code;
+  }
   pre.append(codeEl);
   wrap.append(head, pre);
   return wrap;
+}
+
+const TABLE_DIVIDER = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+
+function splitTableRow(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function isTableStart(lines, index) {
+  const header = lines[index];
+  const divider = lines[index + 1];
+  return Boolean(header && divider && header.includes("|") && TABLE_DIVIDER.test(divider)
+    && splitTableRow(header).length > 1 && splitTableRow(divider).length === splitTableRow(header).length);
+}
+
+function tableAt(lines, index) {
+  if (!isTableStart(lines, index)) return null;
+  const header = lines[index];
+  const divider = lines[index + 1];
+  const head = splitTableRow(header);
+  const rules = splitTableRow(divider);
+  const table = element("table", "md-table");
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  head.forEach((cell, column) => {
+    const th = document.createElement("th");
+    const rule = rules[column];
+    if (/^:-+:$/.test(rule)) th.style.textAlign = "center";
+    else if (/^:?-+:$/.test(rule)) th.style.textAlign = "right";
+    th.append(...inlineNodes(cell));
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  table.append(thead);
+  const tbody = document.createElement("tbody");
+  let cursor = index + 2;
+  while (cursor < lines.length && lines[cursor].includes("|") && !/^\s*$/.test(lines[cursor])) {
+    const row = document.createElement("tr");
+    for (const cell of splitTableRow(lines[cursor])) {
+      const td = document.createElement("td");
+      td.append(...inlineNodes(cell));
+      row.append(td);
+    }
+    tbody.append(row);
+    cursor += 1;
+  }
+  table.append(tbody);
+  const wrap = element("div", "md-table-wrap");
+  wrap.append(table);
+  return { node: wrap, next: cursor };
+}
+
+function taskItem(text) {
+  const match = text.match(/^\[([ xX])\]\s*(.*)$/);
+  if (!match) return null;
+  const done = match[1].toLowerCase() === "x";
+  const item = document.createElement("li");
+  item.className = `md-task${done ? " is-done" : ""}`;
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.disabled = true;
+  box.tabIndex = -1;
+  box.checked = done;
+  box.className = "md-task-box";
+  const label = element("span", "md-task-text");
+  label.append(...inlineNodes(match[2]));
+  item.append(box, label);
+  return item;
 }
 
 // Renders the subset of Markdown the model actually emits, always through text nodes
@@ -163,6 +251,13 @@ function renderMarkdown(text) {
       continue;
     }
     if (/^\s*$/.test(line)) { closeList(); index += 1; continue; }
+    const table = tableAt(lines, index);
+    if (table) {
+      closeList();
+      root.append(table.node);
+      index = table.next;
+      continue;
+    }
     const heading = line.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
       closeList();
@@ -181,9 +276,14 @@ function renderMarkdown(text) {
         list = { kind, node: element(kind, "md-list") };
         root.append(list.node);
       }
-      const item = document.createElement("li");
-      item.append(...inlineNodes((bullet || ordered)[1]));
-      list.node.append(item);
+      const task = bullet ? taskItem(bullet[1]) : null;
+      if (task) {
+        list.node.append(task);
+      } else {
+        const item = document.createElement("li");
+        item.append(...inlineNodes((bullet || ordered)[1]));
+        list.node.append(item);
+      }
       index += 1;
       continue;
     }
@@ -204,7 +304,8 @@ function renderMarkdown(text) {
       && !/^#{1,4}\s/.test(lines[index])
       && !/^\s*[-*]\s+/.test(lines[index])
       && !/^\s*\d+[.)]\s+/.test(lines[index])
-      && !/^>\s?/.test(lines[index])) {
+      && !/^>\s?/.test(lines[index])
+      && !isTableStart(lines, index)) {
       paragraph.push(lines[index]);
       index += 1;
     }
@@ -323,7 +424,14 @@ function messageDistanceFromBottom() {
 
 function updateJumpButton() {
   const button = $("jump-latest");
-  if (button) button.hidden = state.followTail || messagesEl.scrollHeight === 0;
+  if (!button) return;
+  button.hidden = state.followTail || messagesEl.scrollHeight === 0;
+  // Keep the pill just above the composer, whatever height it has grown to.
+  const composer = $("composer");
+  if (composer && !button.hidden) {
+    const room = window.innerHeight - composer.getBoundingClientRect().top;
+    button.style.bottom = `${Math.max(12, room + 12)}px`;
+  }
 }
 
 function followTail() {
@@ -653,17 +761,26 @@ function renderContextPath() {
     return;
   }
   path.forEach((node, index) => {
-    const entry = document.createElement("div");
-    entry.className = "path-entry";
-    const dot = document.createElement("span");
-    dot.className = `path-node ${index === path.length - 1 ? "current" : ""}`;
+    const current = index === path.length - 1;
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = `path-entry${current ? " current" : ""}`;
+    entry.classList.add("path-entry-button");
     const labels = document.createElement("span");
     const title = document.createElement("strong");
-    title.textContent = preview(node.userContent).slice(0, 43);
+    const full = preview(node.userContent);
+    title.textContent = full.length > 46 ? `${full.slice(0, 45).trimEnd()}…` : full;
+    title.title = node.userContent;
+    const tools = Array.isArray(node.toolNames) ? node.toolNames.length : 0;
     const meta = document.createElement("small");
-    meta.textContent = index === path.length - 1 ? "Current turn" : `Turn ${index + 1}`;
+    const suffix = tools ? ` · ${tools} tool${tools === 1 ? "" : "s"}` : "";
+    meta.textContent = current ? `Current turn${suffix}` : `Turn ${index + 1}${suffix}`;
     labels.append(title, meta);
-    entry.append(dot, labels);
+    entry.append(labels);
+    entry.addEventListener("click", () => {
+      if (current) return;
+      selectSession(state.sessionId, node.id);
+    });
     pathList.append(entry);
   });
   $("session-path").textContent = path.length > 1 ? `${path.length} turns` : "main branch";
@@ -1355,6 +1472,15 @@ function setContextLabel() {
   const context = $("run-context");
   if (!context || !state.contextLimit) return;
   const limit = `${Math.round(state.contextLimit / 1000)}K`;
+  const meter = $("context-meter-fill");
+  const share = state.contextUsed ? Math.min(100, (state.contextUsed / state.contextLimit) * 100) : 0;
+  if (meter) {
+    // No usage yet in this view: show nothing rather than an empty bar that reads as "0% used".
+    meter.parentElement.hidden = !state.contextUsed;
+    meter.style.width = `${share.toFixed(1)}%`;
+    meter.parentElement.classList.toggle("is-tight", share >= 75);
+    meter.parentElement.classList.toggle("is-critical", share >= 92);
+  }
   if (!state.contextUsed) {
     context.textContent = limit;
     context.title = "Context window size; usage appears after the first turn.";
@@ -1362,7 +1488,7 @@ function setContextLabel() {
   }
   const used = state.contextUsed < 1000 ? String(state.contextUsed) : `${(state.contextUsed / 1000).toFixed(1)}K`;
   context.textContent = `${used} / ${limit}`;
-  context.title = `Last turn used ${state.contextUsed.toLocaleString()} prompt tokens`;
+  context.title = `Last turn used ${state.contextUsed.toLocaleString()} prompt tokens of ${state.contextLimit.toLocaleString()}`;
 }
 request("/api/health").then((health) => {
   $("health-dot").classList.toggle("ok", health.ok);
