@@ -378,12 +378,6 @@ function addMessage(role, content = "", tools = []) {
   if (empty) empty.remove();
   const row = document.createElement("div");
   row.className = `message ${role}`;
-  const avatar = document.createElement("img");
-  avatar.className = "message-avatar";
-  avatar.src = role === "user" ? "/user-avatar.svg" : "/agent-avatar.svg";
-  avatar.alt = role === "user" ? "You" : "Agent";
-  avatar.width = 34;
-  avatar.height = 34;
   const messageContent = document.createElement("div");
   messageContent.className = "message-content";
   const label = document.createElement("div");
@@ -450,8 +444,7 @@ function addMessage(role, content = "", tools = []) {
     bubble.textContent = content;
   }
   messageContent.append(label, toolList, toolLog, bubble);
-  if (role === "user") row.append(messageContent, avatar);
-  else row.append(avatar, messageContent);
+  row.append(messageContent);
   messagesEl.append(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return api;
@@ -919,7 +912,6 @@ function setRunStatus(kind, title, detail) {
   const box = $("run-status");
   if (!box) return;
   box.dataset.state = kind;
-  $("run-status-icon").textContent = kind === "error" ? "!" : kind === "working" ? "•" : "✓";
   $("run-status-title").textContent = title;
   $("run-status-detail").textContent = detail;
 }
@@ -1304,15 +1296,6 @@ inputEl.addEventListener("keydown", (event) => {
     $("composer").requestSubmit();
   }
 });
-
-// The full prompt is a sentence; on narrow screens it would be clipped mid-word.
-function syncComposerPlaceholder() {
-  const short = "Ask CodingAgentWithEval…";
-  const full = "Ask CodingAgentWithEval to build, inspect or explain…";
-  inputEl.placeholder = window.matchMedia("(max-width: 720px)").matches ? short : full;
-}
-syncComposerPlaceholder();
-window.addEventListener("resize", syncComposerPlaceholder);
 
 refreshSessions().catch((error) => { $("session-meta").textContent = error.message; });
 loadMemories().catch(() => {
