@@ -1043,6 +1043,10 @@ async function sendMessage(event) {
           assistantMessage.setText(streamed ? `${streamed}\n\n_Stopped._` : "_Stopped._");
         } else if (data.type === "done") {
           state.nodeId = data.nodeId;
+          if (data.usage?.promptTokens) {
+            state.contextUsed = data.usage.promptTokens;
+            setContextLabel();
+          }
         }
       }
     }
@@ -1146,12 +1150,26 @@ $("attachment-input").addEventListener("change", async (event) => {
 function setModelLabel(model, contextLimit) {
   state.model = model || state.model;
   if (!state.model) return;
+  if (contextLimit) state.contextLimit = contextLimit;
   for (const id of ["model-name", "composer-model-name", "run-model"]) {
     const node = $(id);
     if (node) node.textContent = state.model;
   }
+  setContextLabel();
+}
+
+function setContextLabel() {
   const context = $("run-context");
-  if (context && contextLimit) context.textContent = `${Math.round(contextLimit / 1000)}K tokens`;
+  if (!context || !state.contextLimit) return;
+  const limit = `${Math.round(state.contextLimit / 1000)}K`;
+  if (!state.contextUsed) {
+    context.textContent = limit;
+    context.title = "Context window size; usage appears after the first turn.";
+    return;
+  }
+  const used = state.contextUsed < 1000 ? String(state.contextUsed) : `${(state.contextUsed / 1000).toFixed(1)}K`;
+  context.textContent = `${used} / ${limit}`;
+  context.title = `Last turn used ${state.contextUsed.toLocaleString()} prompt tokens`;
 }
 request("/api/health").then((health) => {
   $("health-dot").classList.toggle("ok", health.ok);

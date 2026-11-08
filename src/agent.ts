@@ -112,6 +112,11 @@ export class Agent {
     return this.messages;
   }
 
+  /** Token usage accumulated over the whole session, as reported by the provider. */
+  getUsage(): { promptTokens: number; completionTokens: number } {
+    return { promptTokens: this.promptTokens, completionTokens: this.completionTokens };
+  }
+
   async *run(input: string, options?: string | RunOptions): AsyncGenerator<AgentEvent> {
     const runOptions: RunOptions = typeof options === "string" ? { context: options } : (options ?? {});
     const signal = runOptions.signal;

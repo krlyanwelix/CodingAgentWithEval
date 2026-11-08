@@ -157,7 +157,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     if (memoryAvailable && summarizeTurn(turnMessages)) {
       void memory.remember({ messages: turnMessages, sessionId, kind: "fact" });
     }
-    sse(res, { type: "done", sessionId, nodeId: currentNodeId });
+    sse(res, { type: "done", sessionId, nodeId: currentNodeId, usage: agent.getUsage() });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     sessionStore.completeTurn(currentNodeId, assistantContent ?? `Error: ${message}`, toolNames);
